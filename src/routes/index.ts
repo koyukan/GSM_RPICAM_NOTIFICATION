@@ -1,16 +1,15 @@
 import { Router } from 'express';
 
-import Paths from '../common/Paths';
+import Paths from '@src/common/Paths';
 import UserRoutes from './UserRoutes';
 import GoogleDriveRoutes from './GoogleDriveRoutes';
-
+import GSMRoutes from './GSMRoutes';
 
 /******************************************************************************
                                 Variables
 ******************************************************************************/
 
 const apiRouter = Router();
-
 
 // ** Add UserRouter ** //
 
@@ -29,6 +28,8 @@ apiRouter.use(Paths.Users.Base, userRouter);
 // ** Add GoogleDriveRouter ** //
 apiRouter.use(Paths.GoogleDrive.Base, GoogleDriveRoutes);
 
+// ** Add GSMRouter ** //
+apiRouter.use(Paths.GSM.Base, GSMRoutes);
 
 /******************************************************************************
                                 Export default

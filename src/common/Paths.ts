@@ -12,4 +12,12 @@ export default {
     UploadPath: '/upload/path',
     UploadFile: '/upload/file',
   },
+  GSM: {
+    Base: '/gsm',
+    Initialize: '/init',
+    Status: '/status',
+    Location: '/location',
+    SMS: '/sms',
+    ReadSMS: '/sms/:id',
+  },
 } as const;
