@@ -1,8 +1,9 @@
 import { google, drive_v3 } from 'googleapis';
-import { GoogleAuth } from 'google-auth-library';
+import { JWT } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
 import logger from 'jet-logger';
+import { getEnv } from '@src/util/env';
 
 /**
  * Interface for file upload options
@@ -25,45 +26,123 @@ interface DriveFileResponse {
 }
 
 /**
+ * Interface for service account credentials
+ */
+interface ServiceAccountCredentials {
+  type: string;
+  project_id: string;
+  private_key_id: string;
+  private_key: string;
+  client_email: string;
+  client_id: string;
+  auth_uri: string;
+  token_uri: string;
+  auth_provider_x509_cert_url: string;
+  client_x509_cert_url: string;
+}
+
+/**
  * Service to handle Google Drive operations
  */
 class GoogleDriveService {
   private driveClient: drive_v3.Drive | null = null;
-  private auth: GoogleAuth | null = null;
+  private jwtClient: JWT | null = null;
+  private isInitialized = false;
+  private initializationPromise: Promise<void> | null = null;
 
   /**
    * Initialize the Google Drive service
    */
   public constructor(
-    private readonly keyFilePath: string = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? '',
+    private readonly keyFilePath: string = getEnv('GOOGLE_APPLICATION_CREDENTIALS', ''),
     private readonly scopes: string[] = ['https://www.googleapis.com/auth/drive'],
   ) {
-    this.initClient().catch(err => {
-      logger.err('Failed to initialize Google Drive client:', err);
-    });
+    logger.info('Google Drive service created - will initialize on first use');
   }
 
   /**
-   * Initialize the Google Drive client
+   * Initialize the Google Drive client with JWT authentication
+   * This follows the recommended pattern from the googleapis documentation
    */
   private async initClient(): Promise<void> {
-    try {
-      this.auth = new GoogleAuth({
-        keyFile: this.keyFilePath,
-        scopes: this.scopes,
-      });
+    // If already initialized or initializing, return the existing promise
+    if (this.isInitialized) return;
+    if (this.initializationPromise) return this.initializationPromise;
 
-      const authClient = await this.auth.getClient();
-      this.driveClient = google.drive({
-        version: 'v3',
-        auth: authClient,
-      });
+    // Set up the initialization promise
+    this.initializationPromise = (async () => {
+      try {
+        logger.info('Initializing Google Drive client...');
+        
+        // Check if credentials file exists
+        if (!fs.existsSync(this.keyFilePath)) {
+          throw new Error(`Service account key file not found at: ${this.keyFilePath}`);
+        }
 
-      logger.info('Google Drive client initialized successfully');
-    } catch (error) {
-      logger.err('Error initializing Google Drive client:', error);
-      throw error;
-    }
+        // Read and parse the service account key file
+        const rawData = fs.readFileSync(this.keyFilePath, 'utf8');
+        
+        // Parse and validate credentials
+        let credentials: ServiceAccountCredentials;
+        try {
+          const parsed = JSON.parse(rawData) as unknown;
+          
+          // Validate the parsed data
+          if (typeof parsed !== 'object' || parsed === null) {
+            throw new Error('Invalid credentials format: not an object');
+          }
+          
+          const checkedCredentials = parsed as Record<string, unknown>;
+          
+          // Check required fields
+          if (typeof checkedCredentials.client_email !== 'string') {
+            throw new Error('Invalid credentials: missing or invalid client_email');
+          }
+          
+          if (typeof checkedCredentials.private_key !== 'string') {
+            throw new Error('Invalid credentials: missing or invalid private_key');
+          }
+          
+          credentials = parsed as ServiceAccountCredentials;
+        } catch (err) {
+          throw new Error(`Failed to parse credentials file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+
+        logger.info('Creating JWT client...');
+        
+        // Create a JWT client DIRECTLY with the credentials we read
+        // This bypasses all metadata server lookups
+        this.jwtClient = new JWT({
+          email: credentials.client_email,
+          key: credentials.private_key,
+          scopes: this.scopes,
+        });
+
+        logger.info('Authenticating with JWT client...');
+        
+        // Authorize the client
+        await this.jwtClient.authorize();
+        
+        logger.info('Creating Drive client...');
+        
+        // Initialize the Drive API client with our authorized JWT client
+        this.driveClient = google.drive({
+          version: 'v3',
+          auth: this.jwtClient,
+        });
+
+        this.isInitialized = true;
+        logger.info('Google Drive client initialized successfully using service account');
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.err('Error initializing Google Drive client: ' + errorMessage);
+        // Reset initialization state so it can be tried again
+        this.initializationPromise = null;
+        throw error;
+      }
+    })();
+    
+    return this.initializationPromise;
   }
 
   /**
@@ -77,12 +156,14 @@ class GoogleDriveService {
     options: UploadOptions = {},
   ): Promise<DriveFileResponse> {
     try {
-      // Make sure the client is initialized
-      if (!this.driveClient) {
+      // Initialize if needed
+      if (!this.isInitialized) {
         await this.initClient();
-        if (!this.driveClient) {
-          throw new Error('Failed to initialize Google Drive client');
-        }
+      }
+
+      // Verify initialization succeeded
+      if (!this.driveClient) {
+        throw new Error('Google Drive client not initialized');
       }
 
       const fileName = options.fileName ?? path.basename(filePath);
@@ -95,7 +176,7 @@ class GoogleDriveService {
         name: fileName,
         mimeType: mimeType,
         // Make the file accessible to anyone with the link
-        'copyRequiresWriterPermission': false,
+        copyRequiresWriterPermission: false,
       };
 
       // If folder ID is provided, set parent folder
@@ -120,8 +201,9 @@ class GoogleDriveService {
 
       logger.info(`File uploaded successfully: ${fileName}`);
       return response.data as DriveFileResponse;
-    } catch (error) {
-      logger.err(`Error uploading file: ${error}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error uploading file: ' + errorMessage);
       throw error;
     }
   }
@@ -145,8 +227,9 @@ class GoogleDriveService {
       });
 
       logger.info(`File ${fileId} made public`);
-    } catch (error) {
-      logger.err(`Error making file public: ${error}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error making file public: ' + errorMessage);
       throw error;
     }
   }
@@ -167,6 +250,7 @@ class GoogleDriveService {
       '.wmv': 'video/x-ms-wmv',
       '.flv': 'video/x-flv',
       '.mkv': 'video/x-matroska',
+      '.h264': 'video/h264',
       '.png': 'image/png',
       '.jpg': 'image/jpeg',
       '.jpeg': 'image/jpeg',

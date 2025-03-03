@@ -6,6 +6,19 @@ import os from 'os';
 import app from '@src/server';
 import HttpStatusCodes from '@src/common/HttpStatusCodes';
 import Paths from 'spec/support/Paths';
+import { getBoolEnv } from '@src/util/env';
+
+// Type for API responses
+interface UploadResponse {
+  message: string;
+  file: {
+    id: string;
+    name: string;
+    webViewLink?: string;
+    webContentLink?: string;
+    directDownloadLink?: string;
+  };
+}
 
 /**
  * Tests for Google Drive service
@@ -22,7 +35,7 @@ describe('GoogleDriveRouter', () => {
   // Create a test file
   beforeEach(() => {
     // Skip test setup if tests are being skipped
-    if (process.env.SKIP_GOOGLE_DRIVE_TESTS === 'true') return;
+    if (getBoolEnv('SKIP_GOOGLE_DRIVE_TESTS', true)) return;
 
     const tempDir = path.join(os.tmpdir(), 'drive-test');
     if (!fs.existsSync(tempDir)) {
@@ -36,7 +49,7 @@ describe('GoogleDriveRouter', () => {
   // Clean up test file
   afterEach(() => {
     // Skip cleanup if tests are being skipped
-    if (process.env.SKIP_GOOGLE_DRIVE_TESTS === 'true') return;
+    if (getBoolEnv('SKIP_GOOGLE_DRIVE_TESTS', true)) return;
 
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       fs.unlinkSync(tempFilePath);
@@ -47,7 +60,7 @@ describe('GoogleDriveRouter', () => {
   describe(`"POST:${Paths.GoogleDrive.Base}${Paths.GoogleDrive.UploadPath}"`, () => {
     // Skip tests by default
     beforeEach(() => {
-      if (process.env.SKIP_GOOGLE_DRIVE_TESTS === 'true') {
+      if (getBoolEnv('SKIP_GOOGLE_DRIVE_TESTS', true)) {
         pending('Skipping Google Drive tests. Set SKIP_GOOGLE_DRIVE_TESTS=false to run these tests.');
       }
     });
@@ -57,14 +70,17 @@ describe('GoogleDriveRouter', () => {
         .post(`${Paths.Base}${Paths.GoogleDrive.Base}${Paths.GoogleDrive.UploadPath}`)
         .send({ 
           filePath: tempFilePath,
-          fileName: 'test-upload.txt'
+          fileName: 'test-upload.txt',
         });
 
       expect(response.status).toBe(HttpStatusCodes.OK);
-      expect(response.body.message).toContain('successfully');
-      expect(response.body.file).toBeDefined();
-      expect(response.body.file.id).toBeDefined();
-      expect(response.body.file.webViewLink).toBeDefined();
+      
+      const responseBody = response.body as UploadResponse;
+      
+      expect(responseBody.message).toContain('successfully');
+      expect(responseBody.file).toBeDefined();
+      expect(responseBody.file.id).toBeDefined();
+      expect(responseBody.file.webViewLink).toBeDefined();
     });
 
     it(`should return a status code of "${HttpStatusCodes.BAD_REQUEST}" if no file path is provided.`, async () => {
@@ -79,7 +95,7 @@ describe('GoogleDriveRouter', () => {
       const response = await agent
         .post(`${Paths.Base}${Paths.GoogleDrive.Base}${Paths.GoogleDrive.UploadPath}`)
         .send({ 
-          filePath: '/non/existent/path.txt' 
+          filePath: '/non/existent/path.txt',
         });
 
       expect(response.status).toBe(HttpStatusCodes.NOT_FOUND);
@@ -90,7 +106,7 @@ describe('GoogleDriveRouter', () => {
   describe(`"POST:${Paths.GoogleDrive.Base}${Paths.GoogleDrive.UploadFile}"`, () => {
     // Skip tests by default
     beforeEach(() => {
-      if (process.env.SKIP_GOOGLE_DRIVE_TESTS === 'true') {
+      if (getBoolEnv('SKIP_GOOGLE_DRIVE_TESTS', true)) {
         pending('Skipping Google Drive tests. Set SKIP_GOOGLE_DRIVE_TESTS=false to run these tests.');
       }
     });
@@ -102,10 +118,13 @@ describe('GoogleDriveRouter', () => {
         .field('fileName', 'test-form-upload.txt');
 
       expect(response.status).toBe(HttpStatusCodes.OK);
-      expect(response.body.message).toContain('successfully');
-      expect(response.body.file).toBeDefined();
-      expect(response.body.file.id).toBeDefined();
-      expect(response.body.file.webViewLink).toBeDefined();
+      
+      const responseBody = response.body as UploadResponse;
+      
+      expect(responseBody.message).toContain('successfully');
+      expect(responseBody.file).toBeDefined();
+      expect(responseBody.file.id).toBeDefined();
+      expect(responseBody.file.webViewLink).toBeDefined();
     });
 
     it(`should return a status code of "${HttpStatusCodes.BAD_REQUEST}" if no file is provided.`, async () => {

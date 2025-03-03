@@ -1,12 +1,19 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import GoogleDriveController, { upload } from '@src/controllers/GoogleDriveController';
 
 // Create router
 const googleDriveRouter = Router();
 
-// Bind methods to avoid unbound method issues
-const uploadFileHandler = GoogleDriveController.uploadFile.bind(GoogleDriveController);
-const uploadMultipartFileHandler = GoogleDriveController.uploadMultipartFile.bind(GoogleDriveController);
+// Create proper route handlers that match Express expectations
+const uploadFileHandler = (req: Request, res: Response, next: NextFunction): void => {
+  GoogleDriveController.uploadFile(req, res)
+    .catch(next);
+};
+
+const uploadMultipartFileHandler = (req: Request, res: Response, next: NextFunction): void => {
+  GoogleDriveController.uploadMultipartFile(req, res)
+    .catch(next);
+};
 
 /**
  * @route   POST /upload/path

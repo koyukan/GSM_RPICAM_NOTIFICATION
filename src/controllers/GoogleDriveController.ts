@@ -9,20 +9,8 @@ import os from 'os';
 
 import GoogleDriveService from '@src/services/GoogleDriveService';
 
-/**
- * Type definitions for request body
- */
-interface UploadFileRequest {
-  filePath: string;
-  mimeType?: string;
-  folderID?: string;
-  fileName?: string;
-}
-
-/**
- * Type definitions for file upload
- */
-interface FileUpload {
+// Define MulterFile interface that matches the structure of uploaded files
+interface MulterFile {
   fieldname: string;
   originalname: string;
   encoding: string;
@@ -32,13 +20,6 @@ interface FileUpload {
   filename: string;
   path: string;
   buffer: Buffer;
-}
-
-/**
- * Request with file upload
- */
-interface RequestWithFile extends Request {
-  file?: FileUpload;
 }
 
 /**
@@ -78,7 +59,12 @@ class GoogleDriveController {
    */
   public async uploadFile(req: Request, res: Response): Promise<Response> {
     try {
-      const { filePath, mimeType, folderID, fileName } = req.body as UploadFileRequest;
+      const body = req.body as Record<string, unknown>;
+      
+      const filePath = typeof body.filePath === 'string' ? body.filePath : '';
+      const mimeType = typeof body.mimeType === 'string' ? body.mimeType : undefined;
+      const folderID = typeof body.folderID === 'string' ? body.folderID : undefined;
+      const fileName = typeof body.fileName === 'string' ? body.fileName : undefined;
 
       if (!filePath) {
         throw new RouteError(
@@ -107,11 +93,12 @@ class GoogleDriveController {
         message: 'File uploaded successfully',
         file: {
           ...fileData,
-          directDownloadLink: GoogleDriveService.getDirectDownloadLink(fileData.webContentLink || ''),
+          directDownloadLink: GoogleDriveService.getDirectDownloadLink(fileData.webContentLink ?? ''),
         },
       });
-    } catch (error) {
-      logger.err('Error in uploadFile controller:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error in uploadFile controller: ' + errorMessage);
       if (error instanceof RouteError) {
         throw error;
       }
@@ -125,30 +112,39 @@ class GoogleDriveController {
   /**
    * Upload a file to Google Drive from a multipart form upload
    */
-  public async uploadMultipartFile(req: RequestWithFile, res: Response): Promise<Response> {
+  public async uploadMultipartFile(req: Request, res: Response): Promise<Response> {
     try {
-      if (!req.file) {
+      // Safely cast to known structure
+      const file = req.file as MulterFile | undefined;
+      
+      if (!file) {
         throw new RouteError(
           HttpStatusCodes.BAD_REQUEST,
           'No file was uploaded',
         );
       }
 
-      const filePath = req.file.path;
-      const { folderID } = req.body;
-      const fileName = req.body.fileName as string || req.file.originalname;
+      // Safely access file properties
+      const filePath = file.path;
+      const fileMimeType = file.mimetype;
+      const fileOriginalName = file.originalname;
+      
+      // Extract and validate form fields
+      const reqBody = req.body as Record<string, unknown>;
+      const folderID = typeof reqBody.folderID === 'string' ? reqBody.folderID : undefined;
+      const fileName = typeof reqBody.fileName === 'string' ? reqBody.fileName : fileOriginalName;
 
       // Upload to Google Drive
       const fileData = await GoogleDriveService.uploadFile(filePath, {
-        mimeType: req.file.mimetype,
-        folderID: folderID as string | undefined,
+        mimeType: fileMimeType,
+        folderID,
         fileName,
       });
 
       // Clean up temp file after upload
-      fs.unlink(filePath, (err) => {
-        if (err) {
-          logger.err(`Error deleting temp file ${filePath}:`, err);
+      fs.unlink(filePath, (unlinkErr: NodeJS.ErrnoException | null) => {
+        if (unlinkErr) {
+          logger.err(`Error deleting temp file ${filePath}: ${unlinkErr.message}`);
         }
       });
 
@@ -157,15 +153,17 @@ class GoogleDriveController {
         message: 'File uploaded successfully',
         file: {
           ...fileData,
-          directDownloadLink: GoogleDriveService.getDirectDownloadLink(fileData.webContentLink || ''),
+          directDownloadLink: GoogleDriveService.getDirectDownloadLink(fileData.webContentLink ?? ''),
         },
       });
-    } catch (error) {
-      logger.err('Error in uploadMultipartFile controller:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error in uploadMultipartFile controller: ' + errorMessage);
       
-      // Remove temp file if it exists
-      if (req.file?.path) {
-        fs.unlink(req.file.path, () => {
+      // Remove temp file if it exists 
+      const file = req.file as MulterFile | undefined;
+      if (file && typeof file.path === 'string') {
+        fs.unlink(file.path, () => {
           // Intentionally empty callback
         });
       }

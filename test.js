@@ -3,7 +3,7 @@ const axios = require('axios');
 async function uploadFile() {
   try {
     const response = await axios.post('http://localhost:3000/api/drive/upload/path', {
-      filePath: '/path/to/video.mp4',
+      filePath: 'videos/timeline.mp4',
       fileName: 'my-video.mp4'
     });
     
