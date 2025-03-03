@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import Paths from '../common/Paths';
 import UserRoutes from './UserRoutes';
+import GoogleDriveRoutes from './GoogleDriveRoutes';
 
 
 /******************************************************************************
@@ -24,6 +25,9 @@ userRouter.delete(Paths.Users.Delete, UserRoutes.delete);
 
 // Add UserRouter
 apiRouter.use(Paths.Users.Base, userRouter);
+
+// ** Add GoogleDriveRouter ** //
+apiRouter.use(Paths.GoogleDrive.Base, GoogleDriveRoutes);
 
 
 /******************************************************************************

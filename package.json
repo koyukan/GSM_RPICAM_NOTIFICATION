@@ -21,6 +21,8 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-async-errors": "^3.1.1",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^146.0.0",
     "helmet": "^8.0.0",
     "inserturlparams": "^2.0.5",
     "jet-env": "^1.1.4",
@@ -30,7 +32,8 @@
     "jet-validators": "^1.1.1",
     "jsonfile": "^6.1.0",
     "module-alias": "^2.2.3",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
@@ -46,6 +49,7 @@
     "@types/jsonfile": "^6.1.4",
     "@types/module-alias": "^2.0.4",
     "@types/morgan": "^1.9.9",
+    "@types/multer": "^1.4.12",
     "@types/node": "^22.13.8",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.21.0",
