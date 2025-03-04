@@ -26,4 +26,10 @@ export default {
     CaptureById: '/capture/:id',
     Files: '/files',
   },
+  Trigger: {
+    Base: '/trigger',
+    Start: '/start',
+    Status: '/:id',
+    All: '/',
+  },
 } as const;

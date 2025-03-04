@@ -5,6 +5,7 @@ import UserRoutes from './UserRoutes';
 import GoogleDriveRoutes from './GoogleDriveRoutes';
 import GSMRoutes from './GSMRoutes';
 import VideoRoutes from './VideoRoutes';
+import TriggerRoutes from './TriggerRoutes';
 
 /******************************************************************************
                                 Variables
@@ -34,6 +35,9 @@ apiRouter.use(Paths.GSM.Base, GSMRoutes);
 
 // ** Add VideoRouter ** //
 apiRouter.use(Paths.Video.Base, VideoRoutes);
+
+// ** Add TriggerRouter ** //
+apiRouter.use(Paths.Trigger.Base, TriggerRoutes);
 
 /******************************************************************************
                                 Export default
