@@ -1,6 +1,6 @@
 name: "GSM RPICAM HASS"
 description: "GSM RPICAM add-on!"
-version: "1.0.0"
+version: "1.0.1"
 slug: "gsm_rpicam_hass"
 init: false
 arch:
