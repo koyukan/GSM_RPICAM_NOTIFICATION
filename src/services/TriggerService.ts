@@ -36,6 +36,7 @@ export interface TriggerStatus {
 class TriggerService {
   // Use constructor-type arguments for generic Map
   private triggers = new Map<string, TriggerStatus>();
+  private gsmInitialized = false;
   
   /**
    * Start the trigger flow process
@@ -273,6 +274,43 @@ class TriggerService {
   }
   
   /**
+   * Ensure GSM module is initialized
+   * @returns True if GSM module is initialized or initialization was successful
+   */
+  private async ensureGSMInitialized(): Promise<boolean> {
+    if (this.gsmInitialized) {
+      return true;
+    }
+    
+    try {
+      // Check if GSM modem is already initialized
+      const status = GSMService.getStatus();
+      if (status.initialized && status.modemId) {
+        this.gsmInitialized = true;
+        logger.info('GSM modem already initialized');
+        return true;
+      }
+      
+      // Initialize GSM modem
+      logger.info('Initializing GSM modem...');
+      const initResult = await GSMService.initialize();
+      
+      if (initResult) {
+        this.gsmInitialized = true;
+        logger.info('GSM modem initialized successfully');
+        return true;
+      } else {
+        logger.err('Failed to initialize GSM modem');
+        return false;
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err(`GSM initialization error: ${errorMessage}`);
+      return false;
+    }
+  }
+  
+  /**
    * Send SMS notification with the video link
    * @param triggerId Trigger ID
    * @param config Trigger configuration
@@ -291,6 +329,12 @@ class TriggerService {
       
       status.currentStep = 'notifying';
       this.triggers.set(triggerId, status);
+      
+      // Ensure GSM modem is initialized
+      const gsmReady = await this.ensureGSMInitialized();
+      if (!gsmReady) {
+        throw new Error('GSM modem is not initialized. Cannot send SMS.');
+      }
       
       // Prepare SMS message
       const defaultMessage = 'Alert: Motion detected. View recording at: ';
