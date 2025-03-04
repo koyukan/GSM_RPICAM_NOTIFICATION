@@ -1,0 +1,48 @@
+hass@hass:~/GSM_RPICAM_NOTIFICATION $ npm run build
+
+> gsm_rpicam_notification@0.0.0 build
+> ts-node ./scripts/build.ts
+
+[2025-03-03T14:54:39.338Z] INFO: 
+> gsm_rpicam_notification@0.0.0 lint
+> eslint --flag unstable_ts_config
+
+[2025-03-03T14:54:39.343Z] WARNING: (node:5797) ESLintInactiveFlag_unstable_ts_config: The flag 'unstable_ts_config' is inactive: This feature is now enabled by default.
+(Use `node --trace-warnings ...` to show where the warning was created)
+Oops! Something went wrong! :(
+ESLint: 9.21.0
+TypeError: isBuiltin is not a function
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/util/extend-trackmap-with-node-prefix.js:17:65
+    at Array.filter (<anonymous>)
+    at extendTraceMapWithNodePrefix (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/util/extend-trackmap-with-node-prefix.js:17:18)
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/rules/no-deprecated-api.js:627:17
+    at eval_evalModule (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:196325)
+    at jitiRequire (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:190233)
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:199352
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/index.js:23:26
+    at eval_evalModule (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:196325)
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:194552
+
+[2025-03-03T14:54:39.344Z] ERROR: Error: Command failed: npm run lint
+(node:5797) ESLintInactiveFlag_unstable_ts_config: The flag 'unstable_ts_config' is inactive: This feature is now enabled by default.
+(Use `node --trace-warnings ...` to show where the warning was created)
+Oops! Something went wrong! :(
+ESLint: 9.21.0
+TypeError: isBuiltin is not a function
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/util/extend-trackmap-with-node-prefix.js:17:65
+    at Array.filter (<anonymous>)
+    at extendTraceMapWithNodePrefix (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/util/extend-trackmap-with-node-prefix.js:17:18)
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/rules/no-deprecated-api.js:627:17
+    at eval_evalModule (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:196325)
+    at jitiRequire (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:190233)
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:199352
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/eslint-plugin-n/lib/index.js:23:26
+    at eval_evalModule (/home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:196325)
+    at /home/hass/GSM_RPICAM_NOTIFICATION/node_modules/jiti/dist/jiti.cjs:1:194552
+
+hass@hass:~/GSM_RPICAM_NOTIFICATION $ 
+hass@hass:~/GSM_RPICAM_NOTIFICATION $ node --version
+v18.2.0
+hass@hass:~/GSM_RPICAM_NOTIFICATION $ npm --version
+8.9.0
+hass@hass:~/GSM_RPICAM_NOTIFICATION $ 

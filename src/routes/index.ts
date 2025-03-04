@@ -4,6 +4,7 @@ import Paths from '@src/common/Paths';
 import UserRoutes from './UserRoutes';
 import GoogleDriveRoutes from './GoogleDriveRoutes';
 import GSMRoutes from './GSMRoutes';
+import VideoRoutes from './VideoRoutes';
 
 /******************************************************************************
                                 Variables
@@ -30,6 +31,9 @@ apiRouter.use(Paths.GoogleDrive.Base, GoogleDriveRoutes);
 
 // ** Add GSMRouter ** //
 apiRouter.use(Paths.GSM.Base, GSMRoutes);
+
+// ** Add VideoRouter ** //
+apiRouter.use(Paths.Video.Base, VideoRoutes);
 
 /******************************************************************************
                                 Export default

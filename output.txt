@@ -1,0 +1,17 @@
+hass@hass:~ $ sudo rpicam-vid -t 10000 -o /home/hass/Desktop/kaan.h264
+[0:19:38.550690483] [6742]  INFO Camera camera_manager.cpp:316 libcamera v0.3.1+50-69a894c4
+[0:19:38.633439180] [6745]  WARN RPiSdn sdn.cpp:40 Using legacy SDN tuning - please consider moving SDN inside rpi.denoise
+[0:19:38.637875915] [6745]  INFO RPI vc4.cpp:447 Registered camera /base/soc/i2c0mux/i2c@1/ov5647@36 to Unicam device /dev/media1 and ISP device /dev/media2
+[0:19:38.638231563] [6745]  INFO RPI pipeline_base.cpp:1125 Using configuration file '/usr/share/libcamera/pipeline/rpi/vc4/rpi_apps.yaml'
+error: XDG_RUNTIME_DIR is invalid or not set in the environment.
+Made X/EGL preview window
+Mode selection for 640:480:12:P
+    SGBRG10_CSI2P,640x480/0 - Score: 1000
+    SGBRG10_CSI2P,1296x972/0 - Score: 1287
+    SGBRG10_CSI2P,1920x1080/0 - Score: 1636.67
+    SGBRG10_CSI2P,2592x1944/0 - Score: 1854
+Stream configuration adjusted
+[0:19:39.399511356] [6742]  INFO Camera camera.cpp:1191 configuring streams: (0) 640x480-YUV420 (1) 640x480-SGBRG10_CSI2P
+[0:19:39.401040206] [6745]  INFO RPI vc4.cpp:622 Sensor: /base/soc/i2c0mux/i2c@1/ov5647@36 - Selected sensor format: 640x480-SGBRG10_1X10 - Selected unicam format: 640x480-pGAA
+Halting: reached timeout of 10000 milliseconds.
+hass@hass:~ $
