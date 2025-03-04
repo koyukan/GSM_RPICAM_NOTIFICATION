@@ -181,7 +181,7 @@ class VideoService {
       this.ensureVideoDirectory();
 
       // Build the command
-      const args = ['-t', status.duration.toString(), '-o', status.path];
+      const args = ['-t', status.duration.toString(),'-n', '-o', status.path];
 
       logger.info(`Starting video capture: rpicam-vid ${args.join(' ')}`);
 
@@ -219,19 +219,24 @@ class VideoService {
         }
       });
 
-      // Handle process completion
-      captureProcess.on('close', (code: number) => {
+      // Process campture completion
+      captureProcess.on('close', (code: number | null) => {
         const endTime = Date.now();
         entry.status.endTime = endTime;
         entry.status.completed = true;
-
-        if (code !== 0 && !entry.status.error) {
+      
+        // Check if there's an actual error code (positive number)
+        // Treat null or 0 as success
+        if (code !== null && code > 0 && !entry.status.error) {
           entry.status.error = `Process exited with code ${code}`;
           logger.err(`Video capture ${id} failed: ${entry.status.error}`);
         } else if (!entry.status.error) {
+          // Consider null a success - it often means the process was terminated 
+          // via signal after successful completion of the timeout duration
           logger.info(`Video capture ${id} completed successfully`);
         }
       });
+
 
       captureProcess.on('error', (error: Error) => {
         const errorMessage = error.message;

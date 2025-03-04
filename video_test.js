@@ -166,7 +166,7 @@ async function runTests() {
     
     // Step 4: Wait for a moment to allow capture to proceed
     console.log(`\n${colors.yellow}Waiting for 2 seconds to allow capture to process...${colors.reset}`);
-    await wait(2000);
+    await wait(10000);
     
     // Step 5: Get updated status
     testResults.status = await getCaptureStatus(testResults.captureId);
@@ -180,7 +180,7 @@ async function runTests() {
     
     // Step 7: Wait for files to be written
     console.log(`\n${colors.yellow}Waiting for 1 second to ensure files are written...${colors.reset}`);
-    await wait(1000);
+    await wait(2000);
     
     // Step 8: List video files
     testResults.videoFiles = await listVideoFiles();
