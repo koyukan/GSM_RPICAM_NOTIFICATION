@@ -20,4 +20,10 @@ export default {
     SMS: '/sms',
     ReadSMS: '/sms/:id',
   },
+  Video: {
+    Base: '/video',
+    Capture: '/capture',
+    CaptureById: '/capture/:id',
+    Files: '/files',
+  },
 } as const;
