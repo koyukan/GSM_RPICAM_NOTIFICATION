@@ -47,8 +47,9 @@ class GSMService {
     longitude: '',
     latitude: '',
     altitude: '',
-    available: false
+    available: false,
   };
+  private jsonSupported = true;
 
   /**
    * Initialize the GSM service
@@ -58,31 +59,161 @@ class GSMService {
   }
 
   /**
-   * Execute mmcli command and parse JSON response
+   * Execute mmcli command and parse response - supporting both JSON and non-JSON formats
    * @param command The mmcli command to execute
-   * @returns Parsed JSON response
+   * @returns Parsed response
    */
   private async executeCommand<T>(command: string): Promise<T> {
     try {
       logger.info(`Executing command: ${command}`);
+      
+      // If previous commands failed with JSON, don't use -J flag
+      if (!this.jsonSupported && command.includes(' -J ')) {
+        command = command.replace(' -J ', ' ');
+      }
+      
       const { stdout } = await execAsync(command);
       logger.info(`Command output: ${stdout.substring(0, 200)}${stdout.length > 200 ? '...' : ''}`);
       
-      // Parse JSON response
-      try {
-        return JSON.parse(stdout) as T;
-      } catch (parseError: unknown) {
-        // If output is not JSON, check if it's a success message
-        if (stdout.includes('successfully')) {
-          return { success: true, message: stdout.trim() } as unknown as T;
+      // Parse response based on command type and format
+      if (this.jsonSupported && command.includes(' -J ')) {
+        try {
+          // Try to parse as JSON
+          return JSON.parse(stdout) as T;
+        } catch (err) {
+          // If JSON parsing fails, disable JSON for future commands
+          this.jsonSupported = false;
+          logger.warn('JSON parsing failed, falling back to text parsing for future commands');
+          
+          // Continue with text parsing
+          return this.parseTextOutput<T>(command, stdout);
         }
-        throw parseError;
+      } else {
+        // Direct text parsing for commands without -J or when JSON is known not to be supported
+        return this.parseTextOutput<T>(command, stdout);
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.err(`Command execution failed: ${errorMessage}`);
       throw error;
     }
+  }
+  
+  /**
+   * Parse plain text output from mmcli commands
+   * @param command The original command that was executed
+   * @param output The command output as text
+   * @returns Parsed output in the expected format
+   */
+  private parseTextOutput<T>(command: string, output: string): T {
+    // Default result if nothing else matches
+    const defaultResult = { success: true, message: output.trim() } as unknown as T;
+    
+    // Check for specific command patterns and parse accordingly
+    if (command.includes('mmcli -L')) {
+      // List modems command
+      const modemList: string[] = [];
+      const modemRegex = /\/org\/freedesktop\/ModemManager1\/Modem\/(\d+)/g;
+      let match;
+      
+      while ((match = modemRegex.exec(output)) !== null) {
+        modemList.push(`/org/freedesktop/ModemManager1/Modem/${match[1]}`);
+      }
+      
+      return { 'modem-list': modemList } as unknown as T;
+    } 
+    else if (command.includes('--messaging-create-sms')) {
+      // Create SMS command
+      const smsPathRegex = /\/org\/freedesktop\/ModemManager1\/SMS\/(\d+)/;
+      const smsPathMatch = smsPathRegex.exec(output);
+      
+      if (smsPathMatch) {
+        const smsPath = smsPathMatch[0];
+        return { 
+          modem: { 
+            messaging: { 
+              'created-sms': smsPath,
+            },
+          },
+        } as unknown as T;
+      }
+    }
+    else if (command.includes('--messaging-list-sms')) {
+      // List SMS command
+      const smsPaths: string[] = [];
+      const smsRegex = /\/org\/freedesktop\/ModemManager1\/SMS\/(\d+)/g;
+      let match;
+      
+      while ((match = smsRegex.exec(output)) !== null) {
+        smsPaths.push(match[0]);
+      }
+      
+      return { 'modem.messaging.sms': smsPaths } as unknown as T;
+    }
+    else if (command.includes('mmcli -s') && !command.includes('--send')) {
+      // Read SMS details
+      const numberRegex = /number\s*:\s*([^\n]+)/;
+      const textRegex = /text\s*:\s*([^\n]+)/;
+      const stateRegex = /state\s*:\s*([^\n]+)/;
+      const timestampRegex = /timestamp\s*:\s*([^\n]+)/;
+      const smsIdRegex = /mmcli -s (\d+)/;
+      
+      const numberMatch = numberRegex.exec(output);
+      const textMatch = textRegex.exec(output);
+      const stateMatch = stateRegex.exec(output);
+      const timestampMatch = timestampRegex.exec(output);
+      const smsIdMatch = smsIdRegex.exec(command);
+      
+      const smsId = smsIdMatch ? smsIdMatch[1] : '';
+      const smsPath = `/org/freedesktop/ModemManager1/SMS/${smsId}`;
+      
+      return {
+        sms: {
+          content: {
+            number: numberMatch ? numberMatch[1].trim() : '',
+            text: textMatch ? textMatch[1].trim() : '',
+          },
+          'dbus-path': smsPath,
+          properties: {
+            state: stateMatch ? stateMatch[1].trim() : '',
+            timestamp: timestampMatch ? timestampMatch[1].trim() : '',
+          },
+        },
+      } as unknown as T;
+    }
+    else if (command.includes('--location-get')) {
+      // Get location command
+      const latitudeRegex = /latitude\s*:\s*([^\n]+)/;
+      const longitudeRegex = /longitude\s*:\s*([^\n]+)/;
+      const altitudeRegex = /altitude\s*:\s*([^\n]+)/;
+      const utcRegex = /utc\s*:\s*([^\n]+)/;
+      
+      const latitudeMatch = latitudeRegex.exec(output);
+      const longitudeMatch = longitudeRegex.exec(output);
+      const altitudeMatch = altitudeRegex.exec(output);
+      const utcMatch = utcRegex.exec(output);
+      
+      return {
+        modem: {
+          location: {
+            gps: {
+              latitude: latitudeMatch ? latitudeMatch[1].trim() : '--',
+              longitude: longitudeMatch ? longitudeMatch[1].trim() : '--',
+              altitude: altitudeMatch ? altitudeMatch[1].trim() : '--',
+              utc: utcMatch ? utcMatch[1].trim() : '',
+            },
+          },
+        },
+      } as unknown as T;
+    }
+    
+    // For send SMS and other commands that just need success
+    if (output.toLowerCase().includes('successfully')) {
+      return defaultResult;
+    }
+    
+    // Default for any other commands
+    return defaultResult;
   }
 
   /**
@@ -91,20 +222,20 @@ class GSMService {
    */
   public async listModems(): Promise<ModemInfo[]> {
     try {
-      const response = await this.executeCommand<{ "modem-list": string[] }>('mmcli -L -J');
+      const response = await this.executeCommand<{ 'modem-list': string[] }>('mmcli -L -J');
       
       // Extract modem IDs from paths
-      const modems: ModemInfo[] = response["modem-list"].map(path => {
+      const modems: ModemInfo[] = response['modem-list'].map(path => {
         const id = path.split('/').pop() ?? '';
         return {
           id: id.replace('Modem/', ''),
           path,
-          enabled: false
+          enabled: false,
         };
       });
       
       return modems;
-    } catch (error: unknown) {
+    } catch (err) {
       logger.err('Error listing modems');
       return [];
     }
@@ -211,15 +342,15 @@ class GSMService {
     this.pollingInterval = setInterval(async () => {
       try {
         await this.getLocation();
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         logger.warn(`Location polling error: ${errorMessage}`);
       }
     }, 30000); // 30 seconds
     
     // Get location immediately
-    this.getLocation().catch((error: unknown) => {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.getLocation().catch((err: unknown) => {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       logger.warn(`Initial location error: ${errorMessage}`);
     });
   }
@@ -242,9 +373,9 @@ class GSMService {
               latitude: string;
               longitude: string;
               utc: string;
-            }
-          }
-        }
+            };
+          };
+        };
       }>(`mmcli -m ${this.modemId} -J --location-get`);
       
       // Check if we have valid GPS data
@@ -256,14 +387,14 @@ class GSMService {
           longitude: gps.longitude,
           latitude: gps.latitude,
           altitude: gps.altitude,
-          available: true
+          available: true,
         };
         logger.info(`GPS location updated: ${JSON.stringify(this.location)}`);
       } else {
         logger.info('GPS location not yet available');
       }
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       logger.warn(`Failed to get location: ${errorMessage}`);
     }
     
@@ -290,10 +421,10 @@ class GSMService {
     
     try {
       const response = await this.executeCommand<{
-        "modem.messaging.sms": string[]
+        'modem.messaging.sms': string[];
       }>(`mmcli -m ${this.modemId} -J --messaging-list-sms`);
       
-      const paths = response["modem.messaging.sms"] ?? [];
+      const paths = response['modem.messaging.sms'] ?? [];
       const ids = paths.map(path => path.split('/').pop() ?? '');
       
       return { paths, ids };
@@ -317,21 +448,21 @@ class GSMService {
             number: string;
             text: string;
           };
-          "dbus-path": string;
+          'dbus-path': string;
           properties: {
             state: string;
             timestamp: string;
-          }
-        }
+          };
+        };
       }>(`mmcli -s ${smsId} -J`);
       
       return {
         id: smsId,
-        path: response.sms["dbus-path"],
+        path: response.sms['dbus-path'],
         number: response.sms.content.number,
         text: response.sms.content.text,
         timestamp: response.sms.properties.timestamp,
-        state: response.sms.properties.state
+        state: response.sms.properties.state,
       };
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -356,21 +487,51 @@ class GSMService {
       // Escape single quotes in the text
       const escapedText = text.replace(/'/g, "\\'");
       
+      // Execute the command with special handling for SMS creation
+      const command = `mmcli -m ${this.modemId} -J --messaging-create-sms="text='${escapedText}',number='${number}'"`;
+      
+      // Try to create SMS
       const response = await this.executeCommand<{
         modem: {
           messaging: {
-            "created-sms": string
-          }
-        }
-      }>(`mmcli -m ${this.modemId} -J --messaging-create-sms="text='${escapedText}',number='${number}'"`);
+            'created-sms': string;
+          };
+        };
+      }>(command);
       
-      const path = response.modem.messaging["created-sms"];
+      // Extract SMS ID
+      const path = response.modem.messaging['created-sms'];
       const smsId = path.split('/').pop() ?? '';
       
       logger.info(`SMS created with ID ${smsId}`);
       return smsId;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // If JSON failed, try fallback to non-JSON command
+      if (!this.jsonSupported) {
+        try {
+          logger.info('Attempting SMS creation with non-JSON command');
+          const escapedText = text.replace(/'/g, "\\'");
+          const fallbackCommand = `mmcli -m ${this.modemId} --messaging-create-sms="text='${escapedText}',number='${number}'"`;
+          
+          const { stdout } = await execAsync(fallbackCommand);
+          logger.info(`SMS creation output: ${stdout}`);
+          
+          // Parse SMS ID from text output
+          const smsPathRegex = /\/org\/freedesktop\/ModemManager1\/SMS\/(\d+)/;
+          const smsPathMatch = smsPathRegex.exec(stdout);
+          if (smsPathMatch) {
+            const smsId = smsPathMatch[1];
+            logger.info(`SMS created with ID ${smsId} (non-JSON method)`);
+            return smsId;
+          }
+        } catch (fallbackError: unknown) {
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
+          logger.err(`Failed to create SMS with fallback method: ${fallbackErrorMessage}`);
+        }
+      }
+      
       logger.err(`Failed to create SMS: ${errorMessage}`);
       return null;
     }
@@ -383,9 +544,23 @@ class GSMService {
    */
   public async sendSMS(smsId: string): Promise<boolean> {
     try {
-      await this.executeCommand(`mmcli -s ${smsId} -J --send`);
-      logger.info(`SMS ${smsId} sent successfully`);
-      return true;
+      // Try with JSON first, fallback to non-JSON if needed
+      const command = this.jsonSupported 
+        ? `mmcli -s ${smsId} -J --send`
+        : `mmcli -s ${smsId} --send`;
+      
+      const { stdout } = await execAsync(command);
+      
+      // Check for success message
+      const success = stdout.toLowerCase().includes('successfully');
+      
+      if (success) {
+        logger.info(`SMS ${smsId} sent successfully`);
+        return true;
+      } else {
+        logger.warn(`SMS send command completed but no success confirmation: ${stdout}`);
+        return false;
+      }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.err(`Failed to send SMS ${smsId}: ${errorMessage}`);
@@ -425,7 +600,7 @@ class GSMService {
       initialized: !!this.modemId,
       modemId: this.modemId,
       gpsEnabled: this.gpsEnabled,
-      location: this.location
+      location: this.location,
     };
   }
 }
