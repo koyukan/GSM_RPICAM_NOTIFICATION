@@ -1,8 +1,8 @@
 // src/services/TriggerService.ts
 import logger from 'jet-logger';
 import VideoService, { VideoStatus } from '@src/services/VideoService';
-import GoogleDriveService from '@src/services/GoogleDriveService';
-import GSMService from '@src/services/GSMService';
+import GoogleDriveService, { UploadStatus } from '@src/services/GoogleDriveService';
+import GSMService, { GPSLocation } from '@src/services/GSMService';
 import fs from 'fs';
 
 /**
@@ -13,6 +13,8 @@ export interface TriggerConfig {
   phoneNumber: string;
   customMessage?: string;
   videoFilename?: string;
+  sendEarlyNotification?: boolean; // Option to send SMS before upload completes
+  includeLocation?: boolean; // Option to include location in SMS
 }
 
 /**
@@ -24,9 +26,13 @@ export interface TriggerStatus {
   completed: boolean;
   currentStep: 'initialized' | 'recording' | 'uploading' | 'notifying' | 'completed' | 'failed';
   videoStatus?: VideoStatus;
+  uploadId?: string;
+  uploadStatus?: UploadStatus;
   uploadedFileId?: string;
   uploadedFileLink?: string;
   smsStatus?: boolean;
+  earlyNotificationSent?: boolean;
+  locationData?: GPSLocation; // Store location data with the trigger
   error?: string;
 }
 
@@ -39,11 +45,145 @@ class TriggerService {
   private gsmInitialized = false;
   
   /**
+   * Constructor with Google Drive event listeners
+   */
+  constructor() {
+    // Set up event listeners for Google Drive uploads
+    GoogleDriveService.on('upload-progress', this.handleUploadProgress.bind(this));
+    GoogleDriveService.on('upload-complete', this.handleUploadComplete.bind(this));
+    GoogleDriveService.on('upload-error', this.handleUploadError.bind(this));
+  }
+  
+  /**
+   * Format GPS location into a Google Maps link
+   * @param location GPS location data
+   * @returns Formatted location string with Google Maps link
+   */
+  private formatLocationForSMS(location: GPSLocation | undefined): string {
+    if (!location || !location.available || 
+        !location.latitude || !location.longitude || 
+        location.latitude === '--' || location.longitude === '--') {
+      return 'Location: Not available';
+    }
+    
+    try {
+      // Parse latitude and longitude
+      const lat = parseFloat(location.latitude);
+      const lng = parseFloat(location.longitude);
+      
+      // Check if parsing was successful and values are valid
+      if (isNaN(lat) || isNaN(lng)) {
+        return 'Location: Invalid coordinates';
+      }
+      
+      // Create Google Maps link using the recommended format
+      const mapsLink = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+      return `Location: ${mapsLink}`;
+    } catch (error) {
+      logger.err(`Error formatting location: ${error}`);
+      return 'Location: Error processing coordinates';
+    }
+  }
+  
+  /**
+   * Handle upload progress event
+   */
+  private handleUploadProgress(uploadId: string, uploadStatus: UploadStatus): void {
+    // Find the trigger that owns this upload
+    for (const [triggerId, triggerStatus] of this.triggers.entries()) {
+      if (triggerStatus.uploadId === uploadId) {
+        // Update the trigger with upload status
+        triggerStatus.uploadStatus = uploadStatus;
+        this.triggers.set(triggerId, triggerStatus);
+        
+        // Log progress periodically (avoid excessive logging)
+        if (uploadStatus.percentComplete % 10 === 0) {
+          logger.info(`Upload progress for trigger ${triggerId}: ${uploadStatus.percentComplete}%`);
+        }
+        
+        // Send early notification when upload reaches 10% if configured
+        if (uploadStatus.percentComplete >= 10 && 
+            !triggerStatus.earlyNotificationSent && 
+            triggerStatus.smsStatus !== true) {
+          this.sendEarlyNotification(triggerId).catch((err: unknown) => {
+            logger.err(`Failed to send early notification for trigger ${triggerId}: ${(err as Error).message}`);
+          });
+        }
+        
+        break;
+      }
+    }
+  }
+  
+  /**
+   * Handle upload complete event
+   */
+  private handleUploadComplete(uploadId: string, uploadStatus: UploadStatus): void {
+    // Find the trigger that owns this upload
+    for (const [triggerId, triggerStatus] of this.triggers.entries()) {
+      if (triggerStatus.uploadId === uploadId) {
+        // Update the trigger with completed upload status
+        triggerStatus.uploadStatus = uploadStatus;
+        triggerStatus.uploadedFileId = uploadStatus.fileId ?? undefined;
+        triggerStatus.uploadedFileLink = uploadStatus.webViewLink ?? undefined;
+        
+        // If early notification was not sent, send final notification
+        if (!triggerStatus.earlyNotificationSent) {
+          this.sendSmsNotification(triggerId, {
+            phoneNumber: '', // Will be retrieved from existing config
+            videoDuration: 0, // Not needed at this point
+          }).catch((err: unknown) => {
+            logger.err(`Failed to send SMS notification for trigger ${triggerId}: ${(err as Error).message}`);
+          });
+        }
+        
+        // Update step to completed if it was the last step
+        if (triggerStatus.currentStep === 'uploading') {
+          triggerStatus.currentStep = 'completed';
+          triggerStatus.completed = true;
+          logger.info(`Trigger flow completed successfully: ${triggerId}`);
+        }
+        
+        this.triggers.set(triggerId, triggerStatus);
+        break;
+      }
+    }
+  }
+  
+  /**
+   * Handle upload error event
+   */
+  private handleUploadError(uploadId: string, error: string): void {
+    // Find the trigger that owns this upload
+    for (const [triggerId, triggerStatus] of this.triggers.entries()) {
+      if (triggerStatus.uploadId === uploadId) {
+        // Update the trigger with error
+        triggerStatus.error = `Upload error: ${error}`;
+        
+        // If early notification was not sent, send error notification
+        if (!triggerStatus.earlyNotificationSent) {
+          this.sendErrorNotification(triggerId, error).catch((err: unknown) => {
+            logger.err(`Failed to send error notification for trigger ${triggerId}: ${(err as Error).message}`);
+          });
+        }
+        
+        // Mark as failed
+        triggerStatus.currentStep = 'failed';
+        triggerStatus.completed = true;
+        
+        this.triggers.set(triggerId, triggerStatus);
+        logger.err(`Trigger ${triggerId} failed due to upload error: ${error}`);
+        break;
+      }
+    }
+  }
+  
+  /**
    * Start the trigger flow process
    * @param config Configuration for the trigger
    * @returns The trigger status
    */
-  public startTrigger(config: TriggerConfig): Promise<TriggerStatus> {
+  public async startTrigger(config: TriggerConfig): Promise<TriggerStatus> {
     const id = `trigger_${Date.now()}`;
     const timestamp = Date.now();
     
@@ -53,6 +193,7 @@ class TriggerService {
       createdAt: timestamp,
       completed: false,
       currentStep: 'initialized',
+      earlyNotificationSent: false,
     };
     
     // Store the status
@@ -95,29 +236,32 @@ class TriggerService {
   }
   
   /**
-   * Execute the entire trigger flow process
+   * Execute the trigger flow process
    * @param triggerId Trigger ID
    * @param config Trigger configuration
    */
   private async executeFlow(triggerId: string, config: TriggerConfig): Promise<void> {
     try {
+      // Initialize GSM to get location data early
+      await this.ensureGSMInitialized();
+      
+      // Fetch location and store it with the trigger
+      await this.updateLocationData(triggerId);
+      
       // Step 1: Record Video
       await this.recordVideo(triggerId, config);
       
-      // Step 2: Upload Video to Google Drive
-      await this.uploadToGoogleDrive(triggerId);
+      // Step 2: Start Upload to Google Drive
+      // This now starts the upload but doesn't wait for completion
+      await this.startUploadToGoogleDrive(triggerId);
       
-      // Step 3: Send SMS Notification
-      await this.sendSmsNotification(triggerId, config);
-      
-      // Mark as completed
-      const status = this.triggers.get(triggerId);
-      if (status) {
-        status.completed = true;
-        status.currentStep = 'completed';
-        this.triggers.set(triggerId, status);
-        logger.info(`Trigger flow completed successfully: ${triggerId}`);
+      // Step 3: Send SMS Notification if early notification is enabled
+      if (config.sendEarlyNotification) {
+        await this.sendEarlyNotification(triggerId);
       }
+      
+      // The rest of the process continues asynchronously via event handlers
+      logger.info(`Trigger flow initial steps completed for ${triggerId}, continuing in background`);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.err(`Trigger flow error: ${errorMessage}`);
@@ -132,6 +276,36 @@ class TriggerService {
       }
       
       throw error;
+    }
+  }
+  
+  /**
+   * Update location data for a trigger
+   * @param triggerId Trigger ID
+   */
+  private async updateLocationData(triggerId: string): Promise<void> {
+    try {
+      const status = this.triggers.get(triggerId);
+      if (!status) {
+        throw new Error(`Trigger ${triggerId} not found`);
+      }
+      
+      // Get current location from GSM module
+      const location = await GSMService.getLocation();
+      
+      // Update trigger status with location data
+      status.locationData = location;
+      this.triggers.set(triggerId, status);
+      
+      if (location.available) {
+        logger.info(`Location data updated for trigger ${triggerId}: ${location.latitude}, ${location.longitude}`);
+      } else {
+        logger.info(`No location data available for trigger ${triggerId}`);
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.warn(`Failed to update location data: ${errorMessage}`);
+      // Don't throw error, just continue without location data
     }
   }
   
@@ -231,10 +405,10 @@ class TriggerService {
   }
   
   /**
-   * Upload video to Google Drive
+   * Start uploading video to Google Drive
    * @param triggerId Trigger ID
    */
-  private async uploadToGoogleDrive(triggerId: string): Promise<void> {
+  private async startUploadToGoogleDrive(triggerId: string): Promise<void> {
     try {
       // Update status
       const status = this.triggers.get(triggerId);
@@ -255,22 +429,236 @@ class TriggerService {
         throw new Error(`Video file not found at path: ${videoPath}`);
       }
       
-      logger.info(`Uploading video to Google Drive for trigger ${triggerId}: ${videoPath}`);
+      logger.info(`Starting video upload to Google Drive for trigger ${triggerId}: ${videoPath}`);
       
-      // Upload to Google Drive
-      const fileData = await GoogleDriveService.uploadFile(videoPath);
+      // Start upload (non-blocking)
+      const uploadId = await GoogleDriveService.startUpload(videoPath);
       
-      // Update trigger status with upload information
-      status.uploadedFileId = fileData.id;
-      status.uploadedFileLink = fileData.webViewLink;
+      // Store the upload ID in trigger status
+      status.uploadId = uploadId;
+      
+      // Get initial upload status
+      const uploadStatus = GoogleDriveService.getUploadStatus(uploadId);
+      if (uploadStatus) {
+        status.uploadStatus = uploadStatus;
+      }
+      
       this.triggers.set(triggerId, status);
       
-      logger.info(`Video upload completed for trigger ${triggerId}: ${fileData.webViewLink}`);
+      logger.info(`Upload started for trigger ${triggerId} with upload ID: ${uploadId}`);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.err(`Google Drive upload error: ${errorMessage}`);
       throw error;
     }
+  }
+  
+  /**
+   * Send early notification with preliminary link
+   * @param triggerId Trigger ID
+   */
+  private async sendEarlyNotification(triggerId: string): Promise<void> {
+    try {
+      const status = this.triggers.get(triggerId);
+      if (!status) {
+        throw new Error(`Trigger ${triggerId} not found`);
+      }
+      
+      // Skip if already sent
+      if (status.earlyNotificationSent) {
+        return;
+      }
+      
+      // Update location data before sending notification
+      await this.updateLocationData(triggerId);
+      
+      logger.info(`Sending early notification for trigger ${triggerId}`);
+      
+      // Update status
+      status.currentStep = 'notifying';
+      this.triggers.set(triggerId, status);
+      
+      // Get phone number from previous executions saved in status
+      const config = this.extractConfigFromStatus(status);
+      if (!config.phoneNumber) {
+        throw new Error(`No phone number found for trigger ${triggerId}`);
+      }
+      
+      // Ensure GSM modem is initialized
+      const gsmReady = await this.ensureGSMInitialized();
+      if (!gsmReady) {
+        throw new Error('GSM modem is not initialized. Cannot send SMS.');
+      }
+      
+      // Format location data for SMS
+      const locationText = this.formatLocationForSMS(status.locationData);
+      
+      // Prepare SMS message
+      const uploadingMessage = "Alert: Motion detected. Video is being uploaded, link will be active soon.\n\n" + locationText;
+      
+      // Send SMS
+      const smsResult = await GSMService.sendNewSMS(config.phoneNumber, uploadingMessage);
+      
+      // Update trigger status
+      status.earlyNotificationSent = true;
+      status.smsStatus = smsResult;
+      this.triggers.set(triggerId, status);
+      
+      if (smsResult) {
+        logger.info(`Early notification sent successfully for trigger ${triggerId}`);
+      } else {
+        logger.warn(`Early notification failed for trigger ${triggerId}`);
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err(`Early notification error: ${errorMessage}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Send SMS notification with the video link
+   * @param triggerId Trigger ID
+   * @param config Trigger configuration
+   */
+  private async sendSmsNotification(triggerId: string, config: TriggerConfig): Promise<void> {
+    try {
+      // Update status
+      const status = this.triggers.get(triggerId);
+      if (!status) {
+        throw new Error(`Trigger ${triggerId} not found`);
+      }
+      
+      // Skip if early notification was already sent
+      if (status.earlyNotificationSent) {
+        return;
+      }
+      
+      if (!status.uploadedFileLink) {
+        throw new Error(`No upload link found for trigger ${triggerId}`);
+      }
+      
+      // Update location data before sending notification
+      await this.updateLocationData(triggerId);
+      
+      status.currentStep = 'notifying';
+      this.triggers.set(triggerId, status);
+      
+      // If config doesn't have phone number, extract from status
+      if (!config.phoneNumber) {
+        const extractedConfig = this.extractConfigFromStatus(status);
+        config.phoneNumber = extractedConfig.phoneNumber;
+      }
+      
+      if (!config.phoneNumber) {
+        throw new Error(`No phone number found for trigger ${triggerId}`);
+      }
+      
+      // Ensure GSM modem is initialized
+      const gsmReady = await this.ensureGSMInitialized();
+      if (!gsmReady) {
+        throw new Error('GSM modem is not initialized. Cannot send SMS.');
+      }
+      
+      // Format location data for SMS
+      const locationText = this.formatLocationForSMS(status.locationData);
+      
+      // Prepare SMS message
+      const defaultMessage = 'Alert: Motion detected. View recording at: ';
+      const message = (config.customMessage ?? defaultMessage) + 
+                     status.uploadedFileLink + 
+                     "\n\n" + locationText;
+      
+      logger.info(`Sending SMS notification for trigger ${triggerId} to ${config.phoneNumber}`);
+      
+      // Send SMS
+      const smsResult = await GSMService.sendNewSMS(config.phoneNumber, message);
+      
+      // Update trigger status with SMS result
+      status.smsStatus = smsResult;
+      this.triggers.set(triggerId, status);
+      
+      if (smsResult) {
+        logger.info(`SMS notification sent successfully for trigger ${triggerId}`);
+      } else {
+        logger.warn(`SMS notification failed for trigger ${triggerId}`);
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err(`SMS notification error: ${errorMessage}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Send error notification
+   * @param triggerId Trigger ID
+   * @param errorMessage Error message
+   */
+  private async sendErrorNotification(triggerId: string, errorMessage: string): Promise<void> {
+    try {
+      // Get trigger status
+      const status = this.triggers.get(triggerId);
+      if (!status) {
+        throw new Error(`Trigger ${triggerId} not found`);
+      }
+      
+      // Update location data before sending notification
+      await this.updateLocationData(triggerId);
+      
+      // Extract config from status
+      const config = this.extractConfigFromStatus(status);
+      if (!config.phoneNumber) {
+        throw new Error(`No phone number found for trigger ${triggerId}`);
+      }
+      
+      // Ensure GSM modem is initialized
+      const gsmReady = await this.ensureGSMInitialized();
+      if (!gsmReady) {
+        throw new Error('GSM modem is not initialized. Cannot send SMS.');
+      }
+      
+      // Format location data for SMS
+      const locationText = this.formatLocationForSMS(status.locationData);
+      
+      // Prepare error message
+      const message = `Alert: Motion was detected but an error occurred while processing the video: ${errorMessage}\n\n${locationText}`;
+      
+      // Send SMS
+      const smsResult = await GSMService.sendNewSMS(config.phoneNumber, message);
+      
+      // Update trigger status
+      status.smsStatus = smsResult;
+      status.earlyNotificationSent = true;
+      this.triggers.set(triggerId, status);
+      
+      if (smsResult) {
+        logger.info(`Error notification sent successfully for trigger ${triggerId}`);
+      } else {
+        logger.warn(`Error notification failed for trigger ${triggerId}`);
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err(`Error notification error: ${errorMessage}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Extract config from status (for when we don't have the original config)
+   * @param status Trigger status
+   * @returns Partial trigger config
+   */
+  private extractConfigFromStatus(status: TriggerStatus): TriggerConfig {
+    // This function extracts necessary configuration from a status object
+    // This is used when we need to perform actions but don't have the original config
+    
+    // Here we rely on data that was stored during the initial trigger
+    return {
+      phoneNumber: '', // Must be filled in by the caller
+      videoDuration: status.videoStatus?.duration ?? 10000,
+      includeLocation: true, // Always include location when available
+    };
   }
   
   /**
@@ -307,57 +695,6 @@ class TriggerService {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.err(`GSM initialization error: ${errorMessage}`);
       return false;
-    }
-  }
-  
-  /**
-   * Send SMS notification with the video link
-   * @param triggerId Trigger ID
-   * @param config Trigger configuration
-   */
-  private async sendSmsNotification(triggerId: string, config: TriggerConfig): Promise<void> {
-    try {
-      // Update status
-      const status = this.triggers.get(triggerId);
-      if (!status) {
-        throw new Error(`Trigger ${triggerId} not found`);
-      }
-      
-      if (!status.uploadedFileLink) {
-        throw new Error(`No upload link found for trigger ${triggerId}`);
-      }
-      
-      status.currentStep = 'notifying';
-      this.triggers.set(triggerId, status);
-      
-      // Ensure GSM modem is initialized
-      const gsmReady = await this.ensureGSMInitialized();
-      if (!gsmReady) {
-        throw new Error('GSM modem is not initialized. Cannot send SMS.');
-      }
-      
-      // Prepare SMS message
-      const defaultMessage = 'Alert: Motion detected. View recording at: ';
-      const message = (config.customMessage ?? defaultMessage) + status.uploadedFileLink;
-      
-      logger.info(`Sending SMS notification for trigger ${triggerId} to ${config.phoneNumber}`);
-      
-      // Send SMS
-      const smsResult = await GSMService.sendNewSMS(config.phoneNumber, message);
-      
-      // Update trigger status with SMS result
-      status.smsStatus = smsResult;
-      this.triggers.set(triggerId, status);
-      
-      if (smsResult) {
-        logger.info(`SMS notification sent successfully for trigger ${triggerId}`);
-      } else {
-        logger.warn(`SMS notification failed for trigger ${triggerId}`);
-      }
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.err(`SMS notification error: ${errorMessage}`);
-      throw error;
     }
   }
 }

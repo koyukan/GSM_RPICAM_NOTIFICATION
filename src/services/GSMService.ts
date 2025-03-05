@@ -2,6 +2,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import logger from 'jet-logger';
+import { getBoolEnv, getEnv } from '@src/util/env';
 
 // Convert exec to Promise-based
 const execAsync = promisify(exec);
@@ -19,6 +20,7 @@ export interface GPSLocation {
   latitude: string;
   altitude: string;
   available: boolean;
+  timestamp: number; // When this data was retrieved
 }
 
 export interface SMSMessage {
@@ -48,8 +50,11 @@ class GSMService {
     latitude: '',
     altitude: '',
     available: false,
+    timestamp: 0,
   };
   private jsonSupported = true;
+  private waitForGPS = getBoolEnv('GPS_WAIT_FOR_LOCATION', false);
+  private gpsTimeout = parseInt(getEnv('GPS_LOCATION_TIMEOUT', '30'), 10);
 
   /**
    * Initialize the GSM service
@@ -278,12 +283,55 @@ class GSMService {
       // Start polling for location updates
       this.startLocationPolling();
       
+      // If configured to wait for GPS, wait for a valid location
+      if (this.waitForGPS) {
+        await this.waitForLocation();
+      }
+      
       return true;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.err(`Modem initialization failed: ${errorMessage}`);
       return false;
     }
+  }
+
+  /**
+   * Wait for a valid GPS location with timeout
+   */
+  private async waitForLocation(): Promise<boolean> {
+    logger.info(`Waiting for GPS location (timeout: ${this.gpsTimeout} seconds)...`);
+    
+    const startTime = Date.now();
+    const timeoutMs = this.gpsTimeout * 1000;
+    
+    // Try to get location immediately
+    await this.getLocation();
+    
+    // If already have location, return immediately
+    if (this.location.available) {
+      logger.info(`GPS location already available: ${this.location.latitude}, ${this.location.longitude}`);
+      return true;
+    }
+    
+    // Wait with timeout for location
+    while (Date.now() - startTime < timeoutMs) {
+      logger.info(`Waiting for GPS location... (${Math.round((Date.now() - startTime) / 1000)}/${this.gpsTimeout} seconds)`);
+      
+      // Wait 5 seconds between checks
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Check if location is available
+      await this.getLocation();
+      
+      if (this.location.available) {
+        logger.info(`GPS location acquired: ${this.location.latitude}, ${this.location.longitude}`);
+        return true;
+      }
+    }
+    
+    logger.warn(`GPS location not acquired within timeout (${this.gpsTimeout} seconds)`);
+    return false;
   }
 
   /**
@@ -388,14 +436,20 @@ class GSMService {
           latitude: gps.latitude,
           altitude: gps.altitude,
           available: true,
+          timestamp: Date.now(),
         };
         logger.info(`GPS location updated: ${JSON.stringify(this.location)}`);
       } else {
+        // Keep the timestamp updated even if location isn't available
+        this.location.timestamp = Date.now();
         logger.info('GPS location not yet available');
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       logger.warn(`Failed to get location: ${errorMessage}`);
+      
+      // Update timestamp to indicate we tried
+      this.location.timestamp = Date.now();
     }
     
     return this.location;
@@ -407,6 +461,16 @@ class GSMService {
    */
   public getCurrentLocation(): GPSLocation {
     return this.location;
+  }
+
+  /**
+   * Check if the current location data is fresh (less than 60 seconds old)
+   * @returns True if location data is considered fresh
+   */
+  public isLocationFresh(): boolean {
+    const FRESHNESS_THRESHOLD = 60000; // 60 seconds
+    return this.location.available && 
+           (Date.now() - this.location.timestamp) < FRESHNESS_THRESHOLD;
   }
 
   /**
@@ -601,6 +665,7 @@ class GSMService {
       modemId: this.modemId,
       gpsEnabled: this.gpsEnabled,
       location: this.location,
+      locationFresh: this.isLocationFresh(),
     };
   }
 }

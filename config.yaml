@@ -1,6 +1,6 @@
 name: "GSM RPICAM HASS"
-description: "GSM RPICAM add-on for capturing videos, uploading to Google Drive, and sending SMS notifications"
-version: "1.0.2"
+description: "GSM RPICAM add-on for capturing videos, uploading to Google Drive, and sending SMS notifications with GPS location"
+version: "1.0.3"
 slug: "gsm_rpicam_hass"
 init: false
 arch:
@@ -27,7 +27,20 @@ options:
   google_credentials: ""
   folder_id: "videos"
   video_directory: "/share/gsm_rpicam_videos"
+  debug_mode: false
+  send_early_notification: true
+  include_location: true
+  wait_for_gps: false
+  gps_timeout: 30
 schema:
   google_credentials: "str?"
   folder_id: "str"
   video_directory: "str"
+  debug_mode: "bool"
+  send_early_notification: "bool"
+  include_location: "bool"
+  wait_for_gps: "bool"
+  gps_timeout: "int(0,120)"
+panel_icon: "mdi:video-wireless"
+panel_title: "GSM RPICAM"
+webui: "http://[HOST]:[PORT:8000]"

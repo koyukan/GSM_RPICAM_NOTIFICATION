@@ -26,6 +26,30 @@ const getAllTriggerStatusesHandler = (req: Request, res: Response, next: NextFun
   }
 };
 
+const getUploadStatusHandler = (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    TriggerController.getUploadStatus(req, res);
+  } catch (error: unknown) {
+    next(error);
+  }
+};
+
+const getAllUploadStatusesHandler = (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    TriggerController.getAllUploadStatuses(req, res);
+  } catch (error: unknown) {
+    next(error);
+  }
+};
+
+const cancelUploadHandler = (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    TriggerController.cancelUpload(req, res);
+  } catch (error: unknown) {
+    next(error);
+  }
+};
+
 /**
  * @route   POST /start
  * @desc    Start a trigger flow (record video, upload, and send SMS)
@@ -46,5 +70,26 @@ triggerRouter.get('/:id', getTriggerStatusHandler);
  * @access  Public
  */
 triggerRouter.get('/', getAllTriggerStatusesHandler);
+
+/**
+ * @route   GET /upload/:id
+ * @desc    Get status of a specific upload
+ * @access  Public
+ */
+triggerRouter.get('/upload/:id', getUploadStatusHandler);
+
+/**
+ * @route   GET /uploads
+ * @desc    Get status of all uploads
+ * @access  Public
+ */
+triggerRouter.get('/uploads', getAllUploadStatusesHandler);
+
+/**
+ * @route   DELETE /upload/:id
+ * @desc    Cancel an ongoing upload
+ * @access  Public
+ */
+triggerRouter.delete('/upload/:id', cancelUploadHandler);
 
 export default triggerRouter;
