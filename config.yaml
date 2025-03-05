@@ -1,5 +1,5 @@
 name: "GSM RPICAM HASS"
-description: "GSM RPICAM add-on!"
+description: "GSM RPICAM add-on for capturing videos, uploading to Google Drive, and sending SMS notifications"
 version: "1.0.1"
 slug: "gsm_rpicam_hass"
 init: false
@@ -13,7 +13,6 @@ startup: services
 ports:
   3000/tcp: 8000
 boot: auto
-# Add these lines for USB access
 uart: true
 privileged:
   - IPC_LOCK
@@ -21,3 +20,14 @@ privileged:
   - SYS_RAWIO
 devices:
   - /dev/ttyUSB0
+map:
+  - addon_config:rw
+  - share:rw
+options:
+  google_credentials: ""
+  folder_id: "videos"
+  video_directory: "/share/gsm_rpicam_videos"
+schema:
+  google_credentials: "str?"
+  folder_id: "str"
+  video_directory: "str"
