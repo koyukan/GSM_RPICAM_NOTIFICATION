@@ -1,6 +1,6 @@
 name: "GSM RPICAM HASS"
 description: "GSM RPICAM add-on for capturing videos, uploading to Google Drive, and sending SMS notifications"
-version: "1.0.1"
+version: "1.0.2"
 slug: "gsm_rpicam_hass"
 init: false
 arch:
