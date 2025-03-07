@@ -122,7 +122,7 @@ class VideoService {
       }
 
       // Copy the script file to the destination
-      const scriptContent = fs.readFileSync(path.join(__dirname, '../../../python/video_handler.py'), 'utf8');
+      const scriptContent = fs.readFileSync(path.join(__dirname, '../../python/video_handler.py'), 'utf8');
       fs.writeFileSync(VideoService.PYTHON_SCRIPT, scriptContent);
       fs.chmodSync(VideoService.PYTHON_SCRIPT, 0o755); // Make executable
 
