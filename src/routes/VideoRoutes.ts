@@ -14,12 +14,32 @@ const startCaptureHandler = (req: Request, res: Response, next: NextFunction): v
   }
 };
 
+const startStreamHandler = (req: Request, res: Response, next: NextFunction): void => {
+  VideoController.startStream(req, res).catch(next);
+};
+
+const stopStreamHandler = (req: Request, res: Response, next: NextFunction): void => {
+  VideoController.stopStream(req, res).catch(next);
+};
+
 const getStatusHandler = (req: Request, res: Response, next: NextFunction): void => {
   try {
     VideoController.getStatus(req, res);
   } catch (error: unknown) {
     next(error);
   }
+};
+
+const getStreamStatusHandler = (req: Request, res: Response, next: NextFunction): void => {
+  try {
+    VideoController.getStreamStatus(req, res);
+  } catch (error: unknown) {
+    next(error);
+  }
+};
+
+const getDetailedStatusHandler = (req: Request, res: Response, next: NextFunction): void => {
+  VideoController.getDetailedStatus(req, res).catch(next);
 };
 
 const getAllStatusesHandler = (req: Request, res: Response, next: NextFunction): void => {
@@ -31,11 +51,7 @@ const getAllStatusesHandler = (req: Request, res: Response, next: NextFunction):
 };
 
 const stopCaptureHandler = (req: Request, res: Response, next: NextFunction): void => {
-  try {
-    VideoController.stopCapture(req, res);
-  } catch (error: unknown) {
-    next(error);
-  }
+  VideoController.stopCapture(req, res).catch(next);
 };
 
 const listVideosHandler = (req: Request, res: Response, next: NextFunction): void => {
@@ -50,11 +66,39 @@ const listVideosHandler = (req: Request, res: Response, next: NextFunction): voi
 videoRouter.post('/capture', startCaptureHandler);
 
 /**
+ * @route   POST /stream
+ * @desc    Start streaming video to a destination
+ * @access  Public
+ */
+videoRouter.post('/stream', startStreamHandler);
+
+/**
+ * @route   DELETE /stream
+ * @desc    Stop the current stream
+ * @access  Public
+ */
+videoRouter.delete('/stream', stopStreamHandler);
+
+/**
+ * @route   GET /stream/status
+ * @desc    Get status of the current stream
+ * @access  Public
+ */
+videoRouter.get('/stream/status', getStreamStatusHandler);
+
+/**
  * @route   GET /capture/:id
  * @desc    Get status of a video capture
  * @access  Public
  */
 videoRouter.get('/capture/:id', getStatusHandler);
+
+/**
+ * @route   GET /status
+ * @desc    Get detailed status of all components
+ * @access  Public
+ */
+videoRouter.get('/status', getDetailedStatusHandler);
 
 /**
  * @route   GET /capture
