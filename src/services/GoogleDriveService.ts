@@ -352,12 +352,13 @@ class GoogleDriveService extends EventEmitter {
     logger.info(`Simple upload completed for ${uploadId}: ${status.fileName}`);
   }
 
+
   /**
- * Process a resumable upload with chunking
- * @param uploadId The upload ID
- * @param options Upload options
- */
-  private async processResumableUpload(uploadId: string, options: UploadOptions): Promise<void> {
+   * Process a resumable upload with chunking
+   * @param uploadId The upload ID
+   * @param options Upload options
+   */
+  private async processResumableUpload(uploadId: string, options: UploadOptions = {}): Promise<void> {
     const status = this.activeUploads.get(uploadId);
     if (!status) {
       throw new Error(`Upload ${uploadId} not found`);
@@ -380,120 +381,189 @@ class GoogleDriveService extends EventEmitter {
     }
     
     try {
-      // Start resumable upload session
-      const res = await this.driveClient!.files.create({
-        requestBody,
-        media: {
-          mimeType,
-          body: fs.createReadStream(status.filePath, { start: 0, end: 0 }),
-        },
-        fields: 'id',
-        uploadType: 'resumable',
-      });
+      // Import axios dynamically
+      const axios = (await import('axios')).default;
       
-      if (!res.data.id) {
-        throw new Error('Failed to create file in Google Drive');
+      logger.info(`Starting resumable upload for ${uploadId}: ${status.fileName}`);
+      
+      if (!this.driveClient) {
+        throw new Error('Google Drive client not initialized');
+      }
+
+      // Step 1: Create a direct resumable session URL using axios
+      // Using the correct endpoint structure as confirmed in the GitHub issue
+      
+      // Get the base URL from the discovery document
+      const baseUrl = 'https://www.googleapis.com/upload/drive/v3/files';
+      
+      // Get an OAuth2 token
+      const credentials = await this.jwtClient!.authorize();
+      const accessToken = credentials.access_token;
+      
+      if (!accessToken) {
+        throw new Error('Failed to obtain access token');
       }
       
-      // Get resumable upload URI from response headers
-      const headers = res.config.headers;
-      const location = headers ? (headers['X-Goog-Upload-URL'] as string) : null;
+      logger.info('Initiating resumable upload session...');
+      
+      // Make the initial request to get the resumable session URI
+      const sessionInitResponse = await axios({
+        method: 'POST',
+        url: `${baseUrl}?uploadType=resumable`,
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': status.bytesTotal
+        },
+        data: requestBody
+      });
+      
+      // Extract the location header (contains the resumable session URI)
+      const location = typeof sessionInitResponse.headers?.location === 'string' ? sessionInitResponse.headers.location : null;
+      if (!location) {
+        throw new Error('Resumable upload URL not found in response headers');
+      }
       
       if (!location) {
         throw new Error('Resumable upload URL not found in response headers');
       }
       
-      // Upload file in chunks
-      const fileId = res.data.id;
+      logger.info(`Got resumable upload URL: ${location}`);
+      
+      // Now we can start uploading chunks to the resumable session URL
       let bytesUploaded = 0;
-      let retries = 0;
-      const MAX_RETRIES = 5;
+      const fileSize = status.bytesTotal;
       
-      // Open file for reading
-      const fileStream = fs.createReadStream(status.filePath, { highWaterMark: this.CHUNK_SIZE });
+      // Read the file in chunks and upload
+      const readStream = fs.createReadStream(status.filePath);
+      const chunks: Buffer[] = [];
       
-      // Import axios dynamically
-      const axios = (await import('axios')).default;
+      for await (const chunk of readStream) {
+        chunks.push(Buffer.from(chunk as Buffer));
+      }
       
-      // Set up data event handler
-      for await (const chunk of fileStream) {
+      const fileBuffer = Buffer.concat(chunks);
+      
+      // Upload the file in chunks
+      while (bytesUploaded < fileSize) {
         // Check if upload was canceled
         const currentStatus = this.activeUploads.get(uploadId);
         if (!currentStatus || currentStatus.status === 'canceled') {
-          fileStream.destroy();
           throw new Error('Upload canceled');
         }
         
-        // Upload chunk with retry logic
-        let success = false;
-        while (!success && retries < MAX_RETRIES) {
-          try {
-            const chunkData = chunk as Buffer;
-            const chunkLength = chunkData.length;
-            
-            const uploadHeaders = {
-              'Content-Length': String(chunkLength),
-              'Content-Range': `bytes ${bytesUploaded}-${bytesUploaded + chunkLength - 1}/${status.bytesTotal}`,
-            };
-            
-            // Use axios directly instead of driveClient.request
-            await axios({
-              url: location,
-              method: 'PUT',
-              headers: uploadHeaders,
-              data: chunkData,
-              maxContentLength: Infinity,
-              maxBodyLength: Infinity,
-            });
-            
-            // Update progress
-            bytesUploaded += chunkLength;
-            
-            // Update status
-            status.bytesUploaded = bytesUploaded;
-            status.percentComplete = Math.round((bytesUploaded / status.bytesTotal) * 100);
-            this.activeUploads.set(uploadId, status);
-            
-            // Emit progress event
-            this.emit('upload-progress', uploadId, { ...status });
-            
-            success = true;
-          } catch (error) {
-            retries++;
-            
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            logger.warn(`Chunk upload failed: ${errorMessage}`);
-            
-            // If we've reached max retries, fail
-            if (retries >= MAX_RETRIES) {
-              throw error;
-            }
-            
-            // Wait before retrying (exponential backoff)
-            const backoffTime = Math.pow(2, retries) * 1000;
-            logger.warn(`Retrying in ${backoffTime}ms (retry ${retries}/${MAX_RETRIES})`);
-            await new Promise(resolve => setTimeout(resolve, backoffTime));
-          }
-        }
+        // Calculate chunk size for this iteration
+        const chunkSize = Math.min(this.CHUNK_SIZE, fileSize - bytesUploaded);
+        const endByte = bytesUploaded + chunkSize - 1;
+        const chunk = fileBuffer.subarray(bytesUploaded, bytesUploaded + chunkSize);
         
-        // Reset retries for next chunk
-        retries = 0;
+        const contentRange = `bytes ${bytesUploaded}-${endByte}/${fileSize}`;
+        logger.info(`Uploading chunk: ${contentRange}`);
+        
+        try {
+          // Use axios for the upload
+          const response = await axios({
+            url: location,
+            method: 'PUT',
+            headers: {
+              'Content-Range': contentRange,
+              'Content-Length': chunkSize.toString()
+            },
+            data: chunk,
+            validateStatus: (status) => {
+              // Accept 200, 201 (success) and 308 (resume incomplete)
+              return (status >= 200 && status < 300) || status === 308;
+            },
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
+          });
+          
+          // Handle the response
+          if (response.status === 200 || response.status === 201) {
+            // Upload complete
+            logger.info('Upload completed successfully');
+            const responseData = response.data as drive_v3.Schema$File;
+            status.fileId = responseData.id ?? null;
+            status.webViewLink = (response.data as drive_v3.Schema$File).webViewLink ?? null;
+            status.webContentLink = (response.data as drive_v3.Schema$File).webContentLink ?? null;
+            bytesUploaded = fileSize; // Mark as complete
+          } else if (response.status === 308) {
+            // Resume incomplete - get the range from the response
+            const range: string | undefined = response.headers.range as string | undefined;
+            if (range) {
+              // Range comes back as 'bytes=0-X'
+              const regex = /bytes=0-(\d+)/;
+              const match = regex.exec(range);
+              if (match?.[1]) {
+                const newBytesUploaded = parseInt(match[1], 10) + 1;
+                logger.info(`Server confirmed ${newBytesUploaded} bytes received. Continuing upload...`);
+                bytesUploaded = newBytesUploaded;
+              } else {
+                // If we can't parse the range, increment by our chunk size
+                bytesUploaded += chunkSize;
+                logger.info(`Couldn't parse range header. Assuming ${bytesUploaded} bytes uploaded.`);
+              }
+            } else {
+              // If no range header, just move to the next chunk
+              bytesUploaded += chunkSize;
+              logger.info(`No range header received. Assuming ${bytesUploaded} bytes uploaded.`);
+            }
+          }
+          
+          // Update status
+          status.bytesUploaded = bytesUploaded;
+          status.percentComplete = Math.round((bytesUploaded / fileSize) * 100);
+          this.activeUploads.set(uploadId, status);
+          
+          // Emit progress event
+          this.emit('upload-progress', uploadId, { ...status });
+          
+        } catch (error: unknown) {
+          // Handle errors
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          
+          // Special handling for 404 errors - session expired
+          if (axios.isAxiosError(error) && error.response && error.response.status === 404) {
+            logger.warn(`Upload session expired. Restarting the upload process.`);
+            // We need to start over with a new session
+            return await this.processResumableUpload(uploadId, options);
+          }
+          
+          // For other errors, throw and let the caller handle it
+          logger.err(`Chunk upload error: ${errorMessage}`);
+          throw error;
+        }
       }
       
-      // Get file metadata
-      const metadata = await this.driveClient!.files.get({
-        fileId,
-        fields: 'id, name, webViewLink, webContentLink',
-      });
+      // If we didn't get a file ID from the upload response, query for it
+      if (!status.fileId) {
+        logger.info('Upload complete but no file ID received. Querying for the file...');
+        const searchResult = await this.driveClient.files.list({
+          q: `name='${status.fileName}' and trashed=false`,
+          fields: 'files(id, name, webViewLink, webContentLink)',
+          orderBy: 'createdTime desc',
+          pageSize: 1
+        });
+        
+        if (searchResult.data.files && searchResult.data.files.length > 0) {
+          status.fileId = searchResult.data.files[0].id ?? null;
+          status.webViewLink = searchResult.data.files[0].webViewLink ?? null;
+          status.webContentLink = searchResult.data.files[0].webContentLink ?? null;
+          logger.info(`File found with ID: ${status.fileId}`);
+        } else {
+          throw new Error('Could not retrieve file ID after upload');
+        }
+      }
       
       // Make the file publicly accessible
-      await this.makeFilePublic(fileId);
+      if (status.fileId) {
+        logger.info(`Making file ${status.fileId} publicly accessible`);
+        await this.makeFilePublic(status.fileId);
+      }
       
       // Update status
-      status.fileId = fileId;
-      status.webViewLink = metadata.data.webViewLink ?? null;
-      status.webContentLink = metadata.data.webContentLink ?? null;
-      status.bytesUploaded = status.bytesTotal;
+      status.bytesUploaded = fileSize;
       status.percentComplete = 100;
       status.status = 'completed';
       status.endTime = Date.now();
