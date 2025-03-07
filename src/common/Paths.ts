@@ -11,6 +11,10 @@ export default {
     Base: '/drive',
     UploadPath: '/upload/path',
     UploadFile: '/upload/file',
+    Start: '/start',
+    Status: '/status/:id',
+    All: '/all',
+    Cancel: '/cancel/:id',
   },
   GSM: {
     Base: '/gsm',

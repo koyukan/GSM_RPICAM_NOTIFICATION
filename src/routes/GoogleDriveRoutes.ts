@@ -15,6 +15,26 @@ const uploadMultipartFileHandler = (req: Request, res: Response, next: NextFunct
     .catch(next);
 };
 
+const startUploadHandler = (req: Request, res: Response, next: NextFunction): void => {
+  GoogleDriveController.startUpload(req, res)
+    .catch(next);
+};
+
+const getUploadStatusHandler = (req: Request, res: Response, next: NextFunction): void => {
+  GoogleDriveController.getUploadStatus(req, res)
+    .catch(next);
+};
+
+const getAllUploadsHandler = (req: Request, res: Response, next: NextFunction): void => {
+  GoogleDriveController.getAllUploads(req, res)
+    .catch(next);
+};
+
+const cancelUploadHandler = (req: Request, res: Response, next: NextFunction): void => {
+  GoogleDriveController.cancelUpload(req, res)
+    .catch(next);
+};
+
 /**
  * @route   POST /upload/path
  * @desc    Upload a file to Google Drive from a local path
@@ -34,6 +54,46 @@ googleDriveRouter.post(
   '/upload/file',
   upload.single('file'),
   uploadMultipartFileHandler,
+);
+
+/**
+ * @route   POST /start
+ * @desc    Start an asynchronous file upload and get an upload ID
+ * @access  Public
+ */
+googleDriveRouter.post(
+  '/start',
+  startUploadHandler,
+);
+
+/**
+ * @route   GET /status/:id
+ * @desc    Get the status of an upload by ID
+ * @access  Public
+ */
+googleDriveRouter.get(
+  '/status/:id',
+  getUploadStatusHandler,
+);
+
+/**
+ * @route   GET /all
+ * @desc    Get all uploads status
+ * @access  Public
+ */
+googleDriveRouter.get(
+  '/all',
+  getAllUploadsHandler,
+);
+
+/**
+ * @route   DELETE /cancel/:id
+ * @desc    Cancel an ongoing upload
+ * @access  Public
+ */
+googleDriveRouter.delete(
+  '/cancel/:id',
+  cancelUploadHandler,
 );
 
 export default googleDriveRouter;

@@ -352,7 +352,6 @@ class GoogleDriveService extends EventEmitter {
     logger.info(`Simple upload completed for ${uploadId}: ${status.fileName}`);
   }
 
-
   /**
    * Process a resumable upload with chunking
    * @param uploadId The upload ID
@@ -391,7 +390,6 @@ class GoogleDriveService extends EventEmitter {
       }
 
       // Step 1: Create a direct resumable session URL using axios
-      // Using the correct endpoint structure as confirmed in the GitHub issue
       
       // Get the base URL from the discovery document
       const baseUrl = 'https://www.googleapis.com/upload/drive/v3/files';
@@ -425,38 +423,34 @@ class GoogleDriveService extends EventEmitter {
         throw new Error('Resumable upload URL not found in response headers');
       }
       
-      if (!location) {
-        throw new Error('Resumable upload URL not found in response headers');
-      }
-      
       logger.info(`Got resumable upload URL: ${location}`);
       
       // Now we can start uploading chunks to the resumable session URL
       let bytesUploaded = 0;
       const fileSize = status.bytesTotal;
       
-      // Read the file in chunks and upload
-      const readStream = fs.createReadStream(status.filePath);
-      const chunks: Buffer[] = [];
+      // Update status to uploading
+      status.status = 'uploading';
+      this.activeUploads.set(uploadId, status);
+      this.emit('upload-status-change', uploadId, { ...status });
       
-      for await (const chunk of readStream) {
-        chunks.push(Buffer.from(chunk as Buffer));
-      }
+      // Read the file as a stream and upload in chunks
+      const fileStream = fs.createReadStream(status.filePath, { 
+        highWaterMark: this.CHUNK_SIZE, // Use our chunk size as the buffer size
+      });
       
-      const fileBuffer = Buffer.concat(chunks);
-      
-      // Upload the file in chunks
-      while (bytesUploaded < fileSize) {
+      // Process the stream chunk by chunk
+      for await (const chunk of fileStream) {
         // Check if upload was canceled
         const currentStatus = this.activeUploads.get(uploadId);
         if (!currentStatus || currentStatus.status === 'canceled') {
           throw new Error('Upload canceled');
         }
         
-        // Calculate chunk size for this iteration
-        const chunkSize = Math.min(this.CHUNK_SIZE, fileSize - bytesUploaded);
+        // Get the buffer from the chunk
+        const buffer = Buffer.from(chunk as Buffer);
+        const chunkSize = buffer.length;
         const endByte = bytesUploaded + chunkSize - 1;
-        const chunk = fileBuffer.subarray(bytesUploaded, bytesUploaded + chunkSize);
         
         const contentRange = `bytes ${bytesUploaded}-${endByte}/${fileSize}`;
         logger.info(`Uploading chunk: ${contentRange}`);
@@ -470,7 +464,7 @@ class GoogleDriveService extends EventEmitter {
               'Content-Range': contentRange,
               'Content-Length': chunkSize.toString()
             },
-            data: chunk,
+            data: buffer,
             validateStatus: (status) => {
               // Accept 200, 201 (success) and 308 (resume incomplete)
               return (status >= 200 && status < 300) || status === 308;
@@ -485,9 +479,16 @@ class GoogleDriveService extends EventEmitter {
             logger.info('Upload completed successfully');
             const responseData = response.data as drive_v3.Schema$File;
             status.fileId = responseData.id ?? null;
-            status.webViewLink = (response.data as drive_v3.Schema$File).webViewLink ?? null;
-            status.webContentLink = (response.data as drive_v3.Schema$File).webContentLink ?? null;
-            bytesUploaded = fileSize; // Mark as complete
+            
+            // Google Drive doesn't always return these links in the final response
+            // We'll check for them and query for them if missing
+            status.webViewLink = responseData.webViewLink ?? null;
+            status.webContentLink = responseData.webContentLink ?? null;
+            
+            // Mark as complete
+            bytesUploaded = fileSize;
+            status.bytesUploaded = fileSize;
+            status.percentComplete = 100;
           } else if (response.status === 308) {
             // Resume incomplete - get the range from the response
             const range: string | undefined = response.headers.range as string | undefined;
@@ -499,26 +500,41 @@ class GoogleDriveService extends EventEmitter {
                 const newBytesUploaded = parseInt(match[1], 10) + 1;
                 logger.info(`Server confirmed ${newBytesUploaded} bytes received. Continuing upload...`);
                 bytesUploaded = newBytesUploaded;
+                
+                // Update progress in status
+                status.bytesUploaded = bytesUploaded;
+                status.percentComplete = Math.round((bytesUploaded / fileSize) * 100);
+                this.activeUploads.set(uploadId, status);
+                
+                // Emit progress event
+                this.emit('upload-progress', uploadId, { ...status });
               } else {
                 // If we can't parse the range, increment by our chunk size
                 bytesUploaded += chunkSize;
                 logger.info(`Couldn't parse range header. Assuming ${bytesUploaded} bytes uploaded.`);
+                
+                // Update progress in status
+                status.bytesUploaded = bytesUploaded;
+                status.percentComplete = Math.round((bytesUploaded / fileSize) * 100);
+                this.activeUploads.set(uploadId, status);
+                
+                // Emit progress event
+                this.emit('upload-progress', uploadId, { ...status });
               }
             } else {
               // If no range header, just move to the next chunk
               bytesUploaded += chunkSize;
               logger.info(`No range header received. Assuming ${bytesUploaded} bytes uploaded.`);
+              
+              // Update progress in status
+              status.bytesUploaded = bytesUploaded;
+              status.percentComplete = Math.round((bytesUploaded / fileSize) * 100);
+              this.activeUploads.set(uploadId, status);
+              
+              // Emit progress event
+              this.emit('upload-progress', uploadId, { ...status });
             }
           }
-          
-          // Update status
-          status.bytesUploaded = bytesUploaded;
-          status.percentComplete = Math.round((bytesUploaded / fileSize) * 100);
-          this.activeUploads.set(uploadId, status);
-          
-          // Emit progress event
-          this.emit('upload-progress', uploadId, { ...status });
-          
         } catch (error: unknown) {
           // Handle errors
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -536,35 +552,23 @@ class GoogleDriveService extends EventEmitter {
         }
       }
       
-      // If we didn't get a file ID from the upload response, query for it
-      if (!status.fileId) {
-        logger.info('Upload complete but no file ID received. Querying for the file...');
-        const searchResult = await this.driveClient.files.list({
-          q: `name='${status.fileName}' and trashed=false`,
-          fields: 'files(id, name, webViewLink, webContentLink)',
-          orderBy: 'createdTime desc',
-          pageSize: 1
-        });
-        
-        if (searchResult.data.files && searchResult.data.files.length > 0) {
-          status.fileId = searchResult.data.files[0].id ?? null;
-          status.webViewLink = searchResult.data.files[0].webViewLink ?? null;
-          status.webContentLink = searchResult.data.files[0].webContentLink ?? null;
-          logger.info(`File found with ID: ${status.fileId}`);
-        } else {
-          throw new Error('Could not retrieve file ID after upload');
-        }
+      // If we didn't get file links from the upload response, query for them
+      if (!status.webViewLink || !status.webContentLink) {
+        await this.fetchFileLinksByFileId(status);
       }
       
       // Make the file publicly accessible
       if (status.fileId) {
         logger.info(`Making file ${status.fileId} publicly accessible`);
         await this.makeFilePublic(status.fileId);
+        
+        // If we still don't have links, try one more time after making public
+        if (!status.webViewLink || !status.webContentLink) {
+          await this.fetchFileLinksByFileId(status);
+        }
       }
       
-      // Update status
-      status.bytesUploaded = fileSize;
-      status.percentComplete = 100;
+      // Update status to completed
       status.status = 'completed';
       status.endTime = Date.now();
       
@@ -585,6 +589,38 @@ class GoogleDriveService extends EventEmitter {
       this.emit('upload-error', uploadId, errorMessage);
       
       throw error;
+    }
+  }
+
+  /**
+   * Fetch file links by fileId when they weren't provided in the upload response
+   * @param status Upload status with fileId
+   */
+  private async fetchFileLinksByFileId(status: UploadStatus): Promise<void> {
+    if (!status.fileId || !this.driveClient) {
+      return;
+    }
+    
+    try {
+      logger.info(`Fetching file links for fileId: ${status.fileId}`);
+      
+      const fileInfo = await this.driveClient.files.get({
+        fileId: status.fileId,
+        fields: 'id,name,webViewLink,webContentLink'
+      });
+      
+      if (fileInfo.data) {
+        status.webViewLink = fileInfo.data.webViewLink ?? status.webViewLink;
+        status.webContentLink = fileInfo.data.webContentLink ?? status.webContentLink;
+        
+        logger.info(`Retrieved links for ${status.fileId}:`);
+        logger.info(`- Web View Link: ${status.webViewLink}`);
+        logger.info(`- Web Content Link: ${status.webContentLink}`);
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.warn(`Failed to fetch file links for ${status.fileId}: ${errorMessage}`);
+      // Don't throw, continue without links
     }
   }
 
@@ -670,16 +706,75 @@ class GoogleDriveService extends EventEmitter {
       
       // Wait for upload to complete
       return await new Promise<DriveFileResponse>((resolve, reject) => {
+        // Set timeout for long-running uploads
+        const timeout = setTimeout(() => {
+          const status = this.getUploadStatus(uploadId);
+          if (status && status.status === 'uploading') {
+            // Don't reject, just return what we have so far
+            logger.warn(`Upload ${uploadId} is taking longer than expected. Returning in-progress upload info.`);
+            
+            // Return partial info
+            resolve({
+              id: status.fileId ?? 'in-progress',
+              name: status.fileName,
+              uploadId: uploadId, // Special field to indicate this is still in progress
+              status: status.status,
+              percentComplete: status.percentComplete,
+            });
+          }
+        }, 60000); // 60 seconds timeout
+        
+        // Set up event listener for completed upload
+        const completeListener = (id: string, uploadStatus: UploadStatus) => {
+          if (id === uploadId) {
+            clearTimeout(timeout);
+            this.removeListener('upload-complete', completeListener);
+            this.removeListener('upload-error', errorListener);
+            
+            // Convert to legacy response format
+            const response: DriveFileResponse = {
+              id: uploadStatus.fileId ?? '',
+              name: uploadStatus.fileName,
+              webViewLink: uploadStatus.webViewLink ?? undefined,
+              webContentLink: uploadStatus.webContentLink ?? undefined,
+            };
+            
+            resolve(response);
+          }
+        };
+        
+        // Set up event listener for upload errors
+        const errorListener = (id: string, error: string) => {
+          if (id === uploadId) {
+            clearTimeout(timeout);
+            this.removeListener('upload-complete', completeListener);
+            this.removeListener('upload-error', errorListener);
+            
+            reject(new Error(error));
+          }
+        };
+        
+        // Register event listeners
+        this.on('upload-complete', completeListener);
+        this.on('upload-error', errorListener);
+        
+        // Also poll for completion in case we're restarting and the event has already fired
         const checkInterval = setInterval(() => {
           const status = this.getUploadStatus(uploadId);
           if (!status) {
             clearInterval(checkInterval);
+            clearTimeout(timeout);
+            this.removeListener('upload-complete', completeListener);
+            this.removeListener('upload-error', errorListener);
             reject(new Error(`Upload ${uploadId} not found`));
             return;
           }
           
           if (status.status === 'completed') {
             clearInterval(checkInterval);
+            clearTimeout(timeout);
+            this.removeListener('upload-complete', completeListener);
+            this.removeListener('upload-error', errorListener);
             
             // Convert to legacy response format
             const response: DriveFileResponse = {
@@ -692,6 +787,9 @@ class GoogleDriveService extends EventEmitter {
             resolve(response);
           } else if (status.status === 'failed') {
             clearInterval(checkInterval);
+            clearTimeout(timeout);
+            this.removeListener('upload-complete', completeListener);
+            this.removeListener('upload-error', errorListener);
             reject(new Error(status.error ?? 'Upload failed'));
           }
         }, 1000);

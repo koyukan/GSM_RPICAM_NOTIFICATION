@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await */
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -55,7 +56,196 @@ export const upload = multer({
  */
 class GoogleDriveController {
   /**
+   * Start an asynchronous upload from a provided local path
+   */
+  public async startUpload(req: Request, res: Response): Promise<Response> {
+    try {
+      const body = req.body as Record<string, unknown>;
+      
+      const filePath = typeof body.filePath === 'string' ? body.filePath : '';
+      const mimeType = typeof body.mimeType === 'string' ? body.mimeType : undefined;
+      const folderID = typeof body.folderID === 'string' ? body.folderID : undefined;
+      const fileName = typeof body.fileName === 'string' ? body.fileName : undefined;
+
+      if (!filePath) {
+        throw new RouteError(
+          HttpStatusCodes.BAD_REQUEST,
+          'File path is required',
+        );
+      }
+
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        throw new RouteError(
+          HttpStatusCodes.NOT_FOUND,
+          `File not found at path: ${filePath}`,
+        );
+      }
+
+      // Get file size
+      const stats = fs.statSync(filePath);
+
+      // Start async upload and get upload ID
+      const uploadId = await GoogleDriveService.startUpload(filePath, {
+        mimeType,
+        folderID,
+        fileName,
+      });
+
+      // Get initial status
+      const status = GoogleDriveService.getUploadStatus(uploadId);
+      if (!status) {
+        throw new RouteError(
+          HttpStatusCodes.INTERNAL_SERVER_ERROR,
+          'Failed to get upload status',
+        );
+      }
+
+      // Return the upload ID and initial status
+      return res.status(HttpStatusCodes.OK).json({
+        message: 'File upload started',
+        uploadId,
+        status,
+        fileName: status.fileName,
+        fileSize: stats.size,
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error in startUpload controller: ' + errorMessage);
+      if (error instanceof RouteError) {
+        throw error;
+      }
+      throw new RouteError(
+        HttpStatusCodes.INTERNAL_SERVER_ERROR,
+        'Error starting file upload to Google Drive',
+      );
+    }
+  }
+
+  /**
+   * Get the status of an upload
+   */
+  public async getUploadStatus(req: Request, res: Response): Promise<Response> {
+    try {
+      const uploadId = req.params.id;
+
+      if (!uploadId) {
+        throw new RouteError(
+          HttpStatusCodes.BAD_REQUEST,
+          'Upload ID is required',
+        );
+      }
+
+      // Get status
+      const status = GoogleDriveService.getUploadStatus(uploadId);
+      if (!status) {
+        throw new RouteError(
+          HttpStatusCodes.NOT_FOUND,
+          `Upload with ID ${uploadId} not found`,
+        );
+      }
+
+      // If the upload is complete and we have a fileId, ensure we return the proper links
+      if (status.status === 'completed' && status.fileId) {
+        // Return status with direct download link
+        return res.status(HttpStatusCodes.OK).json({
+          ...status,
+          directDownloadLink: status.webContentLink 
+            ? GoogleDriveService.getDirectDownloadLink(status.webContentLink) 
+            : null,
+        });
+      }
+
+      // Return status
+      return res.status(HttpStatusCodes.OK).json(status);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error in getUploadStatus controller: ' + errorMessage);
+      if (error instanceof RouteError) {
+        throw error;
+      }
+      throw new RouteError(
+        HttpStatusCodes.INTERNAL_SERVER_ERROR,
+        'Error getting upload status',
+      );
+    }
+  }
+
+  /**
+   * Get all uploads
+   */
+  public async getAllUploads(req: Request, res: Response): Promise<Response> {
+    try {
+      const statuses = GoogleDriveService.getAllUploadStatuses();
+      
+      // Add direct download links to completed uploads
+      const statusesWithLinks = statuses.map(status => {
+        if (status.status === 'completed' && status.webContentLink) {
+          return {
+            ...status,
+            directDownloadLink: GoogleDriveService.getDirectDownloadLink(status.webContentLink),
+          };
+        }
+        return status;
+      });
+
+      return res.status(HttpStatusCodes.OK).json({
+        count: statusesWithLinks.length,
+        uploads: statusesWithLinks,
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error in getAllUploads controller: ' + errorMessage);
+      throw new RouteError(
+        HttpStatusCodes.INTERNAL_SERVER_ERROR,
+        'Error getting all uploads',
+      );
+    }
+  }
+
+  /**
+   * Cancel an upload
+   */
+  public async cancelUpload(req: Request, res: Response): Promise<Response> {
+    try {
+      const uploadId = req.params.id;
+
+      if (!uploadId) {
+        throw new RouteError(
+          HttpStatusCodes.BAD_REQUEST,
+          'Upload ID is required',
+        );
+      }
+
+      // Cancel upload
+      const canceled = GoogleDriveService.cancelUpload(uploadId);
+      if (!canceled) {
+        throw new RouteError(
+          HttpStatusCodes.BAD_REQUEST,
+          `Upload with ID ${uploadId} cannot be canceled (not found or already completed)`,
+        );
+      }
+
+      return res.status(HttpStatusCodes.OK).json({
+        message: `Upload ${uploadId} canceled successfully`,
+        uploadId,
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.err('Error in cancelUpload controller: ' + errorMessage);
+      if (error instanceof RouteError) {
+        throw error;
+      }
+      throw new RouteError(
+        HttpStatusCodes.INTERNAL_SERVER_ERROR,
+        'Error canceling upload',
+      );
+    }
+  }
+
+  /**
    * Upload a file to Google Drive from a provided local path
+   * (Legacy method - maintained for backward compatibility)
    */
   public async uploadFile(req: Request, res: Response): Promise<Response> {
     try {
@@ -111,6 +301,7 @@ class GoogleDriveController {
 
   /**
    * Upload a file to Google Drive from a multipart form upload
+   * (Legacy method - maintained for backward compatibility)
    */
   public async uploadMultipartFile(req: Request, res: Response): Promise<Response> {
     try {
