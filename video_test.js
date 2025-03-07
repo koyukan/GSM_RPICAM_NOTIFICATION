@@ -49,7 +49,7 @@ async function testVideoStreaming() {
   section('Video Streaming Test');
   
   try {
-    const destination = "MY_UDP_DESTINATION:12345"; // Replace with your UDP destination
+    const destination = "192.168.2.238:12345"; // Replace with your UDP destination
     
     // Get detailed status before starting
     const initialStatus = await axios.get(`${VIDEO_ENDPOINT}/status`);
@@ -58,7 +58,7 @@ async function testVideoStreaming() {
     // Start streaming
     const streamResponse = await axios.post(`${VIDEO_ENDPOINT}/stream`, {
       destination,
-      timeout: 60 // 1 minute timeout for testing
+      timeout: 120 // 1 minute timeout for testing
     });
     success('Started streaming', streamResponse.data);
     
