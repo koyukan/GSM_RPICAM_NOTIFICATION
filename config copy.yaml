@@ -1,28 +1,46 @@
-name: "GSM RPICAM HASS"
+name: "GSM RPICAM"
 description: "GSM RPICAM add-on for capturing videos, uploading to Google Drive, and sending SMS notifications with GPS location"
-version: "1.0.3"
+version: "1.2.0"
 slug: "gsm_rpicam_hass"
 init: false
 arch:
   - aarch64
-  - amd64
-  - armhf
   - armv7
-  - i386
+  - armhf
 startup: services
 ports:
   3000/tcp: 8000
 boot: auto
 uart: true
-privileged:
-  - IPC_LOCK
-  - SYS_ADMIN
-  - SYS_RAWIO
+privileged: true  # Full privileged mode for hardware access
 devices:
   - /dev/ttyUSB0
+  - /dev/ttyUSB1
+  - /dev/ttyUSB2
+  - /dev/ttyUSB3
+  - /dev/video0
+  - /dev/vchiq  # Raspberry Pi camera
+  - /dev/vcsm-cma  # Raspberry Pi memory
 map:
   - addon_config:rw
   - share:rw
+apparmor: false
+host_network: true
+host_dbus: true
+host_ipc: true
+full_access: true
+environment:
+  DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/run/dbus/system_bus_socket"
+mounts:
+  - source: /dev/bus/usb
+    target: /dev/bus/usb
+    type: bind
+  - source: /run/dbus
+    target: /run/dbus
+    type: bind
+  - source: /run/udev
+    target: /run/udev
+    type: bind
 options:
   google_credentials: ""
   folder_id: "videos"
