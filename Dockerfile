@@ -1,13 +1,26 @@
-# Use Node.js 22 with Debian Bookworm as base image
-FROM node:22-bookworm
+# Start with Debian Bookworm as base image
+FROM debian:bookworm
 
 # Set working directory
 WORKDIR /app
 
 # ------------------------------------------------------------------------------------------------
-# Install GSM/ModemManager dependencies
+# Install Raspberry Pi camera dependencies (using your proven approach)
 # ------------------------------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt update && apt install -y --no-install-recommends gnupg
+RUN echo "deb http://archive.raspberrypi.org/debian/ bookworm main" > /etc/apt/sources.list.d/raspi.list \
+  && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 82B129927FA3303E
+RUN apt update && apt -y upgrade
+
+# ------------------------------------------------------------------------------------------------
+# Install GSM/ModemManager and Node.js dependencies in one layer to keep image size down
+# ------------------------------------------------------------------------------------------------
+RUN apt update && apt install -y --no-install-recommends \
+    # Camera dependencies
+    python3-pip \
+    python3-picamera2 \
+    ffmpeg \
+    # GSM dependencies
     modemmanager \
     libqmi-utils \
     usbutils \
@@ -15,8 +28,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     usb-modeswitch \
     dbus \
     sudo \
-    gnupg \
+    # Node.js dependencies
+    curl \
+    build-essential \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt install -y nodejs \
     && apt-get clean \
+    && apt-get autoremove \
+    && rm -rf /var/cache/apt/archives/* \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up D-Bus system bus
@@ -24,26 +43,10 @@ RUN mkdir -p /run/dbus && \
     dbus-uuidgen > /var/lib/dbus/machine-id
 
 # ------------------------------------------------------------------------------------------------
-# Install Raspberry Pi camera dependencies
-# ------------------------------------------------------------------------------------------------
-# Add Raspberry Pi repository
-RUN echo "deb http://archive.raspberrypi.org/debian/ bookworm main" > /etc/apt/sources.list.d/raspi.list \
-    && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 82B129927FA3303E \
-    && apt-get update
-
-# Install Python and picamera2
-RUN apt-get install -y --no-install-recommends \
-    python3-pip \
-    python3-picamera2 \
-    ffmpeg \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# ------------------------------------------------------------------------------------------------
-# Copy Python requirements and install dependencies
+# Install Python dependencies
 # ------------------------------------------------------------------------------------------------
 COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 
 # ------------------------------------------------------------------------------------------------
 # Copy application files

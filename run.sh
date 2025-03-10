@@ -126,6 +126,23 @@ fi
 # ------------------------------------------------------------------------------------------------
 print_section "Setting up Raspberry Pi Camera"
 
+# Configure camera timeout
+echo "=== Configuring camera timeout ===" && date
+CONFIG_FILE="/usr/share/libcamera/pipeline/rpi/vc4/rpi_apps.yaml"
+if [ -f "$CONFIG_FILE" ]; then
+    # Make a backup of the original file
+    cp -f "$CONFIG_FILE" "${CONFIG_FILE}.backup"
+fi
+
+# Copy the timeout.yaml to the libcamera config location
+if [ -f "/app/timeout.yaml" ]; then
+    echo "Using custom timeout.yaml"
+    cp -f "/app/timeout.yaml" "$CONFIG_FILE"
+    echo "Configuration applied successfully"
+else
+    echo "Warning: Could not find timeout.yaml"
+fi
+
 # Check if camera device exists
 if [ -e /dev/video0 ]; then
     echo "Camera device found at /dev/video0"
@@ -141,23 +158,6 @@ if [ -e /dev/vchiq ]; then
     chmod 0660 /dev/vcsm-cma 2>/dev/null || true
 else
     echo "Warning: Raspberry Pi camera interface not found at /dev/vchiq. Legacy camera functionality may not work."
-fi
-
-# Copy timeout configuration
-CONFIG_FILE="/usr/share/libcamera/pipeline/rpi/vc4/rpi_apps.yaml"
-if [ -f "/app/timeout.yaml" ]; then
-    echo "Applying camera timeout configuration..."
-    # Make a backup of the original file if it exists
-    if [ -f "$CONFIG_FILE" ]; then
-        cp -f "$CONFIG_FILE" "${CONFIG_FILE}.backup"
-    fi
-    
-    # Copy our custom timeout configuration
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    cp -f "/app/timeout.yaml" "$CONFIG_FILE"
-    echo "Camera timeout configuration applied successfully"
-else
-    echo "Warning: Camera timeout configuration file not found at /app/timeout.yaml"
 fi
 
 # Make sure the Python script directory exists and has proper permissions
