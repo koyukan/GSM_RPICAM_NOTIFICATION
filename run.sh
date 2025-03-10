@@ -1,6 +1,25 @@
-#!/usr/bin/with-contenv bashio
+#!/bin/bash
+# GSM RPICAM HASS add-on startup script
 
-bashio::log.info "Starting GSM RPICAM HASS server..."
+# Enable error handling
+set -e
+
+# Print section header
+print_section() {
+    echo ""
+    echo "==============================================================" 
+    echo "  $1"
+    echo "=============================================================="
+}
+
+# Check if debug mode is enabled
+if bashio::config.true 'debug_mode'; then
+    export DEBUG="true"
+    echo "Debug mode enabled"
+    set -x  # Enable command tracing
+fi
+
+print_section "Setting up environment"
 
 # Create necessary directories
 CONFIG_DIR="/data"
@@ -9,18 +28,18 @@ VIDEO_DIR=$(bashio::config 'video_directory')
 
 # Ensure video directory exists
 if [ ! -d "$VIDEO_DIR" ]; then
-    bashio::log.info "Creating video directory: ${VIDEO_DIR}"
+    echo "Creating video directory: ${VIDEO_DIR}"
     mkdir -p "$VIDEO_DIR"
     chmod 755 "$VIDEO_DIR"
 fi
 
 # Handle Google credentials
 if bashio::config.has_value 'google_credentials'; then
-    bashio::log.info "Setting up Google service account credentials..."
+    echo "Setting up Google service account credentials..."
     echo "$(bashio::config 'google_credentials')" > "${CREDENTIALS_FILE}"
     chmod 600 "${CREDENTIALS_FILE}"
 else
-    bashio::log.warning "No Google credentials provided. Google Drive uploads will not work."
+    echo "Warning: No Google credentials provided. Google Drive uploads will not work."
     echo "{}" > "${CREDENTIALS_FILE}"
 fi
 
@@ -35,46 +54,35 @@ export SMS_INCLUDE_LOCATION="$(bashio::config 'include_location')"
 export GPS_WAIT_FOR_LOCATION="$(bashio::config 'wait_for_gps')"
 export GPS_LOCATION_TIMEOUT="$(bashio::config 'gps_timeout')"
 
-# Set debug flag if specified in add-on configuration
-if bashio::config.true 'debug_mode'; then
-    export DEBUG="true"
-    bashio::log.info "Debug mode enabled"
+# ------------------------------------------------------------------------------------------------
+# Set up GSM Modem
+# ------------------------------------------------------------------------------------------------
+print_section "Setting up GSM Modem"
+
+# Start D-Bus system bus if not already running
+if [ ! -e /var/run/dbus/pid ]; then
+    echo "Starting D-Bus system daemon..."
+    dbus-daemon --system
+    sleep 2
 fi
 
-# Check for USB devices
-bashio::log.info "Checking for GSM modem USB device..."
-ls -l /dev/ttyUSB*
-if [ $? -ne 0 ]; then
-    bashio::log.warning "No USB devices found at /dev/ttyUSB*. GSM functionality may not work correctly."
-fi
+# Start ModemManager
+echo "Starting ModemManager in debug mode..."
+ModemManager --debug &
+sleep 2
 
-# Check for camera
-bashio::log.info "Checking for camera..."
-if [ -e /dev/video0 ]; then
-    bashio::log.info "Camera device found at /dev/video0"
-else
-    bashio::log.warning "No camera device found at /dev/video0. Video capture may not work."
-fi
-
-# Check rpicam-vid command
-if command -v rpicam-vid &> /dev/null; then
-    bashio::log.info "rpicam-vid command found"
-else
-    bashio::log.warning "rpicam-vid command not found. This add-on requires the Raspberry Pi camera stack."
-fi
-
-# Test GSM module connection
-bashio::log.info "Testing GSM module connection..."
+# Check for GSM modem
+echo "Checking for GSM modems..."
 mmcli -L
 if [ $? -ne 0 ]; then
-    bashio::log.warning "GSM modem not detected with mmcli. SMS and GPS features may not work correctly."
+    echo "Warning: GSM modem not detected with mmcli. SMS and GPS features may not work correctly."
 else
-    bashio::log.info "GSM modem detected!"
+    echo "GSM modem detected!"
     
     # If wait for GPS is enabled, try to get a location lock
     if bashio::config.true 'wait_for_gps'; then
-        bashio::log.info "Waiting for GPS location lock (timeout: $(bashio::config 'gps_timeout') seconds)..."
-        # Initialize modem first modem in list
+        echo "Waiting for GPS location lock (timeout: $(bashio::config 'gps_timeout') seconds)..."
+        # Get first modem in list
         MODEM_INDEX=$(mmcli -L | grep -o "/org/freedesktop/ModemManager1/Modem/[0-9]" | head -1 | grep -o "[0-9]$")
         
         if [ -n "$MODEM_INDEX" ]; then
@@ -94,38 +102,83 @@ else
                 if echo "$location_output" | grep -q "latitude" && ! echo "$location_output" | grep -q "latitude: --"; then
                     lat=$(echo "$location_output" | grep "latitude" | awk '{print $2}')
                     lon=$(echo "$location_output" | grep "longitude" | awk '{print $2}')
-                    bashio::log.info "GPS location acquired: $lat, $lon"
+                    echo "GPS location acquired: $lat, $lon"
                     location_found=true
                     break
                 fi
                 
-                bashio::log.info "Waiting for GPS lock... ($count/$TIMEOUT seconds)"
+                echo "Waiting for GPS lock... ($count/$TIMEOUT seconds)"
                 count=$((count + 5))
                 sleep 5
             done
             
             if [ "$location_found" = false ]; then
-                bashio::log.warning "Could not acquire GPS location within timeout period. Continuing without location lock."
+                echo "Warning: Could not acquire GPS location within timeout period. Continuing without location lock."
             fi
         else
-            bashio::log.warning "No modem index found. Cannot initialize GPS."
+            echo "Warning: No modem index found. Cannot initialize GPS."
         fi
     fi
 fi
 
-# Ensure addon_config directory exists for service account
-ADDON_CONFIG_DIR="/addon_config"
-if [ -d "$ADDON_CONFIG_DIR" ]; then
-    bashio::log.info "Found addon_config directory"
+# ------------------------------------------------------------------------------------------------
+# Set up Raspberry Pi Camera
+# ------------------------------------------------------------------------------------------------
+print_section "Setting up Raspberry Pi Camera"
+
+# Check if camera device exists
+if [ -e /dev/video0 ]; then
+    echo "Camera device found at /dev/video0"
 else
-    bashio::log.warning "addon_config directory not found, creating it..."
-    mkdir -p "$ADDON_CONFIG_DIR"
+    echo "Warning: No camera device found at /dev/video0. Video capture may not work."
 fi
 
-# Start the application with proper error handling
-cd /app
-bashio::log.info "Starting application..."
-if ! npm start; then
-    bashio::log.error "Failed to start GSM RPICAM HASS server"
-    exit 1
+# Check for additional camera interfaces
+if [ -e /dev/vchiq ]; then
+    echo "Raspberry Pi camera interface found at /dev/vchiq"
+    # Fix permissions
+    chmod 0660 /dev/vchiq
+    chmod 0660 /dev/vcsm-cma 2>/dev/null || true
+else
+    echo "Warning: Raspberry Pi camera interface not found at /dev/vchiq. Legacy camera functionality may not work."
 fi
+
+# Copy timeout configuration
+CONFIG_FILE="/usr/share/libcamera/pipeline/rpi/vc4/rpi_apps.yaml"
+if [ -f "/app/timeout.yaml" ]; then
+    echo "Applying camera timeout configuration..."
+    # Make a backup of the original file if it exists
+    if [ -f "$CONFIG_FILE" ]; then
+        cp -f "$CONFIG_FILE" "${CONFIG_FILE}.backup"
+    fi
+    
+    # Copy our custom timeout configuration
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    cp -f "/app/timeout.yaml" "$CONFIG_FILE"
+    echo "Camera timeout configuration applied successfully"
+else
+    echo "Warning: Camera timeout configuration file not found at /app/timeout.yaml"
+fi
+
+# Make sure the Python script directory exists and has proper permissions
+if [ -d "/app/python" ]; then
+    echo "Setting permissions for Python scripts..."
+    chmod -R 755 /app/python
+    
+    # Check if video_handler.py exists
+    if [ -f "/app/python/video_handler.py" ]; then
+        chmod +x "/app/python/video_handler.py"
+        echo "Found and made executable: video_handler.py"
+    fi
+else
+    echo "Warning: Python script directory not found at /app/python"
+fi
+
+# ------------------------------------------------------------------------------------------------
+# Start the Node.js application
+# ------------------------------------------------------------------------------------------------
+print_section "Starting Node.js Application"
+
+echo "Starting application at $(date)"
+cd /app
+node build/index.js
