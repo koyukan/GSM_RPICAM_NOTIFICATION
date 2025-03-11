@@ -110,4 +110,28 @@ fi
 # Start the application
 bashio::log.info "Starting application..."
 cd /app
-node build/index.js
+
+# Check where the build output is located
+if [ -f "/app/dist/index.js" ]; then
+    bashio::log.info "Found application at /app/dist/index.js"
+    node /app/dist/index.js
+elif [ -f "/app/build/index.js" ]; then
+    bashio::log.info "Found application at /app/build/index.js"
+    node /app/build/index.js
+else
+    # List all files to help diagnose
+    bashio::log.warning "Could not find application entry point. Listing directories:"
+    ls -la /app
+    ls -la /app/dist || true
+    ls -la /app/build || true
+    
+    # Try to run using the main field from package.json
+    MAIN_FILE=$(node -e "console.log(require('./package.json').main || '')")
+    if [ -n "$MAIN_FILE" ] && [ -f "/app/$MAIN_FILE" ]; then
+        bashio::log.info "Found main file defined in package.json: $MAIN_FILE"
+        node "/app/$MAIN_FILE"
+    else
+        bashio::log.error "Could not find application entry point. Application will not start."
+        exit 1
+    fi
+fi

@@ -36,14 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/cache/apt/archives/* \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt /app/
-RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
-
-# Copy application files
-COPY python/ /app/python/
-COPY timeout.yaml /app/timeout.yaml
-
 # Create D-Bus setup script
 RUN mkdir -p /app/scripts
 RUN echo '#!/bin/bash\n\
@@ -116,16 +108,31 @@ done' > /app/scripts/dbus-setup.sh
 
 RUN chmod +x /app/scripts/dbus-setup.sh
 
-# Copy Node.js application files
-COPY . .
+# Install Python dependencies and copy Python code
+RUN mkdir -p /app/python
+COPY requirements.txt /app/
+COPY python/ /app/python/
+COPY timeout.yaml /app/timeout.yaml
+RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 
-# Install Node.js dependencies and build the application
-RUN npm ci && \
-    npm run build && \
-    npm cache clean --force
+# Set up Node.js application
+COPY package.json package-lock.json tsconfig.json tsconfig.prod.json /app/
+RUN npm ci
 
-# Home Assistant add-on setup
+# Copy source code and build
+COPY src/ /app/src/
+COPY config.ts /app/
+COPY eslint.config.ts /app/
+
+# Build the application
+RUN npm run build
+RUN ls -la /app/dist
+
+# Copy any remaining files
 COPY run.sh /
-RUN chmod a+x /run.sh
+RUN chmod +x /run.sh
+
+# Set the working directory
+WORKDIR /app
 
 CMD [ "/run.sh" ]
