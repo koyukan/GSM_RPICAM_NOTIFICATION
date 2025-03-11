@@ -46,75 +46,73 @@ COPY timeout.yaml /app/timeout.yaml
 
 # Create D-Bus setup script
 RUN mkdir -p /app/scripts
-COPY <<'EOF' /app/scripts/dbus-setup.sh
-#!/bin/bash
-
-# Ensure we're using the host's D-Bus
-export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/run/dbus/system_bus_socket"
-
-# Check if we have access to the host's D-Bus
-if [ -e /run/dbus/system_bus_socket ]; then
-    echo "Host D-Bus socket found at /run/dbus/system_bus_socket"
-    
-    # Test D-Bus access
-    if dbus-send --system --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames > /dev/null 2>&1; then
-        echo "Successfully connected to host D-Bus"
-    else
-        echo "WARNING: Could not connect to host D-Bus, permissions issue?"
-        ls -la /run/dbus/system_bus_socket
-        echo "Current user and groups:"
-        id
-    fi
-else
-    echo "Host D-Bus socket not found at expected location"
-    
-    if [ -e /var/run/dbus/system_bus_socket ]; then
-        echo "Found D-Bus socket at alternate location /var/run/dbus/system_bus_socket"
-        echo "Creating symlink..."
-        mkdir -p /run/dbus
-        ln -sf /var/run/dbus/system_bus_socket /run/dbus/system_bus_socket
-    else
-        echo "No D-Bus socket found. Will attempt to use own D-Bus daemon."
-        mkdir -p /run/dbus
-        dbus-daemon --system
-        sleep 2
-    fi
-fi
-
-# Check if ModemManager is already running on the system
-if pgrep ModemManager > /dev/null; then
-    echo "ModemManager is already running on the system"
-    
-    # Check if it's detecting modems
-    mmcli -L || true
-else
-    echo "Starting ModemManager..."
-    # Start ModemManager in debug mode and in the background
-    ModemManager --debug &
-    sleep 3
-    
-    # Check if it started successfully
-    if pgrep ModemManager > /dev/null; then
-        echo "ModemManager started successfully"
-        mmcli -L || true
-    else
-        echo "Failed to start ModemManager. Will try with different options..."
-        # Try with explicit user
-        ModemManager --debug --user=root &
-        sleep 3
-        mmcli -L || true
-    fi
-fi
-
-# Fix USB device permissions
-echo "Setting USB device permissions..."
-for device in /dev/ttyUSB*; do
-    if [ -e "$device" ]; then
-        echo "Setting permissions for $device"
-        chmod 666 "$device" || echo "Failed to set permissions for $device"
-    fi
-done
-EOF
+RUN echo '#!/bin/bash\n\
+\n\
+# Ensure we are using the hosts D-Bus\n\
+export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/run/dbus/system_bus_socket"\n\
+\n\
+# Check if we have access to the hosts D-Bus\n\
+if [ -e /run/dbus/system_bus_socket ]; then\n\
+    echo "Host D-Bus socket found at /run/dbus/system_bus_socket"\n\
+    \n\
+    # Test D-Bus access\n\
+    if dbus-send --system --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames > /dev/null 2>&1; then\n\
+        echo "Successfully connected to host D-Bus"\n\
+    else\n\
+        echo "WARNING: Could not connect to host D-Bus, permissions issue?"\n\
+        ls -la /run/dbus/system_bus_socket\n\
+        echo "Current user and groups:"\n\
+        id\n\
+    fi\n\
+else\n\
+    echo "Host D-Bus socket not found at expected location"\n\
+    \n\
+    if [ -e /var/run/dbus/system_bus_socket ]; then\n\
+        echo "Found D-Bus socket at alternate location /var/run/dbus/system_bus_socket"\n\
+        echo "Creating symlink..."\n\
+        mkdir -p /run/dbus\n\
+        ln -sf /var/run/dbus/system_bus_socket /run/dbus/system_bus_socket\n\
+    else\n\
+        echo "No D-Bus socket found. Will attempt to use own D-Bus daemon."\n\
+        mkdir -p /run/dbus\n\
+        dbus-daemon --system\n\
+        sleep 2\n\
+    fi\n\
+fi\n\
+\n\
+# Check if ModemManager is already running on the system\n\
+if pgrep ModemManager > /dev/null; then\n\
+    echo "ModemManager is already running on the system"\n\
+    \n\
+    # Check if its detecting modems\n\
+    mmcli -L || true\n\
+else\n\
+    echo "Starting ModemManager..."\n\
+    # Start ModemManager in debug mode and in the background\n\
+    ModemManager --debug &\n\
+    sleep 3\n\
+    \n\
+    # Check if it started successfully\n\
+    if pgrep ModemManager > /dev/null; then\n\
+        echo "ModemManager started successfully"\n\
+        mmcli -L || true\n\
+    else\n\
+        echo "Failed to start ModemManager. Will try with different options..."\n\
+        # Try with explicit user\n\
+        ModemManager --debug --user=root &\n\
+        sleep 3\n\
+        mmcli -L || true\n\
+    fi\n\
+fi\n\
+\n\
+# Fix USB device permissions\n\
+echo "Setting USB device permissions..."\n\
+for device in /dev/ttyUSB*; do\n\
+    if [ -e "$device" ]; then\n\
+        echo "Setting permissions for $device"\n\
+        chmod 666 "$device" || echo "Failed to set permissions for $device"\n\
+    fi\n\
+done' > /app/scripts/dbus-setup.sh
 
 RUN chmod +x /app/scripts/dbus-setup.sh
 
