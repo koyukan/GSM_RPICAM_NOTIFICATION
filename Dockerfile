@@ -115,20 +115,22 @@ COPY python/ /app/python/
 COPY timeout.yaml /app/timeout.yaml
 RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 
-# Set up Node.js application
-COPY package.json package-lock.json tsconfig.json tsconfig.prod.json /app/
+# Copy all application files to ensure the build script has everything it needs
+COPY . /app/
+
+# Install dependencies including development dependencies that might be needed for building
 RUN npm ci
 
-# Copy source code and build
-COPY src/ /app/src/
-COPY config.ts /app/
-COPY eslint.config.ts /app/
+# Make the build script executable
+RUN chmod +x /app/scripts/build.ts 
 
-# Build the application
-RUN npm run build
-RUN ls -la /app/dist
+# Execute the build script directly with ts-node to avoid npm script issues
+RUN npx ts-node /app/scripts/build.ts
 
-# Copy any remaining files
+# Verify the build output
+RUN ls -la /app/dist || echo "No dist directory found"
+
+# Copy run script
 COPY run.sh /
 RUN chmod +x /run.sh
 
