@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // Configuration
-const BASE_URL = 'http://localhost:3000/api';
+const BASE_URL = 'http://192.168.2.174:8000/api';
 const VIDEO_ENDPOINT = `${BASE_URL}/video`;
 
 // Colors for console output

@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // Configuration
-const BASE_URL = 'http://localhost:3000/api';
+const BASE_URL = 'http://192.168.2.174:8000/api';
 const GSM_ENDPOINT = `${BASE_URL}/gsm`;
 const TEST_PHONE_NUMBER = '+905559967545'; // Replace with a valid test phone number
 const TEST_MESSAGE = 'Test message from API test script';

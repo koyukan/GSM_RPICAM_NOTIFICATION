@@ -1,6 +1,6 @@
 name: "GSM RPICAM HASS"
 description: "GSM RPICAM add-on for capturing videos, uploading to Google Drive, and sending SMS notifications with GPS location"
-version: "1.2.9"
+version: "1.2.10"
 slug: "gsm_rpicam_hass"
 init: false
 arch:
@@ -28,6 +28,7 @@ privileged:
 map:
   - addon_config:rw
   - share:rw
+  - /run/udev:/run/udev:ro
 environment:
   DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/run/dbus/system_bus_socket"
   PYTHONUNBUFFERED: "1"
