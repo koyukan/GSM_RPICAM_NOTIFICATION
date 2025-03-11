@@ -54,8 +54,8 @@ bash /app/scripts/dbus-setup.sh
 bashio::log.info "Checking for camera..."
 if [ -e /dev/video0 ]; then
     bashio::log.info "Camera device found at /dev/video0"
-    bashio::log.info "Setting permissions for camera devices..."
-    chmod 666 /dev/video0
+    bashio::log.info "Permissions for camera devices:"
+    ls -la /dev/video0 || true
 
     
 else
