@@ -15,7 +15,11 @@ ports:
 boot: auto
 host_dbus: true
 video: true
+apparmor: false
 devicetree: true
+devices:
+  - /dev/vchiq
+
 privileged:
   - SYS_ADMIN
   - SYS_RAWIO
