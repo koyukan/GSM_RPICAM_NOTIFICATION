@@ -111,13 +111,19 @@ fi
 bashio::log.info "Starting application..."
 cd /app
 
+# Copy the config.js file to the proper location if it's not already there
+if [ -f "/app/config.ts" ] && [ ! -f "/app/config.js" ]; then
+    bashio::log.info "Generating config.js from config.ts..."
+    npx -y tsc /app/config.ts --outDir /app || true
+fi
+
 # Check where the build output is located
 if [ -f "/app/dist/index.js" ]; then
     bashio::log.info "Found application at /app/dist/index.js"
-    node /app/dist/index.js
+    NODE_ENV=production node -r ./config.js ./dist
 elif [ -f "/app/build/index.js" ]; then
     bashio::log.info "Found application at /app/build/index.js"
-    node /app/build/index.js
+    NODE_ENV=production node -r ./config.js ./build
 else
     # List all files to help diagnose
     bashio::log.warning "Could not find application entry point. Listing directories:"
