@@ -1,9 +1,16 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 // src/services/TriggerService.ts
 import logger from 'jet-logger';
 import VideoService, { VideoStatus } from '@src/services/VideoService';
-import GoogleDriveService, { UploadStatus } from '@src/services/GoogleDriveService';
+import GoogleDriveService from '@src/services/GoogleDriveService';
 import GSMService, { GPSLocation } from '@src/services/GSMService';
 import fs from 'fs';
+import { EventEmitter } from 'events';
+import { UploadStatus, IGoogleDriveService } from './GoogleDriveServiceTypes';
+
+// Type assertion for GoogleDriveService to ensure TypeScript recognizes its methods
+const typedGoogleDriveService = GoogleDriveService as unknown as IGoogleDriveService;
 
 /**
  * Interface for trigger configuration
@@ -25,6 +32,7 @@ export interface TriggerStatus {
   createdAt: number;
   completed: boolean;
   currentStep: 'initialized' | 'recording' | 'uploading' | 'notifying' | 'completed' | 'failed';
+  phoneNumber?: string; // Store the phone number with the trigger
   videoStatus?: VideoStatus;
   uploadId?: string;
   uploadStatus?: UploadStatus;
@@ -49,9 +57,10 @@ class TriggerService {
    */
   constructor() {
     // Set up event listeners for Google Drive uploads
-    GoogleDriveService.on('upload-progress', this.handleUploadProgress.bind(this));
-    GoogleDriveService.on('upload-complete', this.handleUploadComplete.bind(this));
-    GoogleDriveService.on('upload-error', this.handleUploadError.bind(this));
+    // TypeScript needs the EventEmitter type assertion
+    (typedGoogleDriveService as EventEmitter).on('upload-progress', this.handleUploadProgress.bind(this));
+    (typedGoogleDriveService as EventEmitter).on('upload-complete', this.handleUploadComplete.bind(this));
+    (typedGoogleDriveService as EventEmitter).on('upload-error', this.handleUploadError.bind(this));
   }
   
   /**
@@ -97,11 +106,14 @@ class TriggerService {
         this.triggers.set(triggerId, triggerStatus);
         
         // Log progress periodically (avoid excessive logging)
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         if (uploadStatus.percentComplete % 10 === 0) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           logger.info(`Upload progress for trigger ${triggerId}: ${uploadStatus.percentComplete}%`);
         }
         
         // Send early notification when upload reaches 10% if configured
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         if (uploadStatus.percentComplete >= 10 && 
             !triggerStatus.earlyNotificationSent && 
             triggerStatus.smsStatus !== true) {
@@ -124,7 +136,9 @@ class TriggerService {
       if (triggerStatus.uploadId === uploadId) {
         // Update the trigger with completed upload status
         triggerStatus.uploadStatus = uploadStatus;
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         triggerStatus.uploadedFileId = uploadStatus.fileId ?? undefined;
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         triggerStatus.uploadedFileLink = uploadStatus.webViewLink ?? undefined;
         
         // If early notification was not sent, send final notification
@@ -194,6 +208,7 @@ class TriggerService {
       completed: false,
       currentStep: 'initialized',
       earlyNotificationSent: false,
+      phoneNumber: config.phoneNumber, // Store phone number with trigger status
     };
     
     // Store the status
@@ -432,13 +447,13 @@ class TriggerService {
       logger.info(`Starting video upload to Google Drive for trigger ${triggerId}: ${videoPath}`);
       
       // Start upload (non-blocking)
-      const uploadId = await GoogleDriveService.startUpload(videoPath);
+      const uploadId = await typedGoogleDriveService.startUpload(videoPath);
       
       // Store the upload ID in trigger status
       status.uploadId = uploadId;
       
       // Get initial upload status
-      const uploadStatus = GoogleDriveService.getUploadStatus(uploadId);
+      const uploadStatus = typedGoogleDriveService.getUploadStatus(uploadId);
       if (uploadStatus) {
         status.uploadStatus = uploadStatus;
       }
@@ -478,7 +493,7 @@ class TriggerService {
       status.currentStep = 'notifying';
       this.triggers.set(triggerId, status);
       
-      // Get phone number from previous executions saved in status
+      // Get phone number from status
       const config = this.extractConfigFromStatus(status);
       if (!config.phoneNumber) {
         throw new Error(`No phone number found for trigger ${triggerId}`);
@@ -653,9 +668,9 @@ class TriggerService {
     // This function extracts necessary configuration from a status object
     // This is used when we need to perform actions but don't have the original config
     
-    // Here we rely on data that was stored during the initial trigger
+    // Use the phone number stored in the status object
     return {
-      phoneNumber: '', // Must be filled in by the caller
+      phoneNumber: status.phoneNumber ?? '', // Use stored phone number
       videoDuration: status.videoStatus?.duration ?? 10000,
       includeLocation: true, // Always include location when available
     };
