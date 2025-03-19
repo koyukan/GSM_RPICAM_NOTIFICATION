@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 // src/services/TriggerService.ts
@@ -7,10 +9,9 @@ import GoogleDriveService from '@src/services/GoogleDriveService';
 import GSMService, { GPSLocation } from '@src/services/GSMService';
 import fs from 'fs';
 import { EventEmitter } from 'events';
-import { UploadStatus, IGoogleDriveService } from './GoogleDriveServiceTypes';
 
-// Type assertion for GoogleDriveService to ensure TypeScript recognizes its methods
-const typedGoogleDriveService = GoogleDriveService as unknown as IGoogleDriveService;
+// Type assertion for GoogleDriveService
+const typedGoogleDriveService = GoogleDriveService as any;
 
 /**
  * Interface for trigger configuration
@@ -35,11 +36,12 @@ export interface TriggerStatus {
   phoneNumber?: string; // Store the phone number with the trigger
   videoStatus?: VideoStatus;
   uploadId?: string;
-  uploadStatus?: UploadStatus;
+  uploadStatus?: any;
   uploadedFileId?: string;
   uploadedFileLink?: string;
   smsStatus?: boolean;
   earlyNotificationSent?: boolean;
+  finalNotificationSent?: boolean; // Added to track final notification
   locationData?: GPSLocation; // Store location data with the trigger
   error?: string;
 }
@@ -97,7 +99,7 @@ class TriggerService {
   /**
    * Handle upload progress event
    */
-  private handleUploadProgress(uploadId: string, uploadStatus: UploadStatus): void {
+  private handleUploadProgress(uploadId: string, uploadStatus: any): void {
     // Find the trigger that owns this upload
     for (const [triggerId, triggerStatus] of this.triggers.entries()) {
       if (triggerStatus.uploadId === uploadId) {
@@ -106,14 +108,11 @@ class TriggerService {
         this.triggers.set(triggerId, triggerStatus);
         
         // Log progress periodically (avoid excessive logging)
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         if (uploadStatus.percentComplete % 10 === 0) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           logger.info(`Upload progress for trigger ${triggerId}: ${uploadStatus.percentComplete}%`);
         }
         
         // Send early notification when upload reaches 10% if configured
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         if (uploadStatus.percentComplete >= 10 && 
             !triggerStatus.earlyNotificationSent && 
             triggerStatus.smsStatus !== true) {
@@ -130,29 +129,23 @@ class TriggerService {
   /**
    * Handle upload complete event
    */
-  private handleUploadComplete(uploadId: string, uploadStatus: UploadStatus): void {
+  private handleUploadComplete(uploadId: string, uploadStatus: any): void {
     // Find the trigger that owns this upload
     for (const [triggerId, triggerStatus] of this.triggers.entries()) {
       if (triggerStatus.uploadId === uploadId) {
         // Update the trigger with completed upload status
         triggerStatus.uploadStatus = uploadStatus;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         triggerStatus.uploadedFileId = uploadStatus.fileId ?? undefined;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         triggerStatus.uploadedFileLink = uploadStatus.webViewLink ?? undefined;
         
-        // If early notification was not sent, send final notification
-        if (!triggerStatus.earlyNotificationSent) {
-          this.sendSmsNotification(triggerId, {
-            phoneNumber: '', // Will be retrieved from existing config
-            videoDuration: 0, // Not needed at this point
-          }).catch((err: unknown) => {
-            logger.err(`Failed to send SMS notification for trigger ${triggerId}: ${(err as Error).message}`);
-          });
-        }
+        // Always send final notification with the video link, regardless of whether
+        // an early notification was sent or not
+        this.sendFinalNotification(triggerId).catch((err: unknown) => {
+          logger.err(`Failed to send final notification for trigger ${triggerId}: ${(err as Error).message}`);
+        });
         
         // Update step to completed if it was the last step
-        if (triggerStatus.currentStep === 'uploading') {
+        if (triggerStatus.currentStep === 'uploading' || triggerStatus.currentStep === 'notifying') {
           triggerStatus.currentStep = 'completed';
           triggerStatus.completed = true;
           logger.info(`Trigger flow completed successfully: ${triggerId}`);
@@ -208,6 +201,7 @@ class TriggerService {
       completed: false,
       currentStep: 'initialized',
       earlyNotificationSent: false,
+      finalNotificationSent: false, // Initialize to false
       phoneNumber: config.phoneNumber, // Store phone number with trigger status
     };
     
@@ -532,23 +526,22 @@ class TriggerService {
   }
   
   /**
-   * Send SMS notification with the video link
+   * Send final notification with the video link
    * @param triggerId Trigger ID
-   * @param config Trigger configuration
    */
-  private async sendSmsNotification(triggerId: string, config: TriggerConfig): Promise<void> {
+  private async sendFinalNotification(triggerId: string): Promise<void> {
     try {
-      // Update status
       const status = this.triggers.get(triggerId);
       if (!status) {
         throw new Error(`Trigger ${triggerId} not found`);
       }
       
-      // Skip if early notification was already sent
-      if (status.earlyNotificationSent) {
+      // Skip if final notification was already sent
+      if (status.finalNotificationSent) {
         return;
       }
       
+      // Need a link to send
       if (!status.uploadedFileLink) {
         throw new Error(`No upload link found for trigger ${triggerId}`);
       }
@@ -559,12 +552,8 @@ class TriggerService {
       status.currentStep = 'notifying';
       this.triggers.set(triggerId, status);
       
-      // If config doesn't have phone number, extract from status
-      if (!config.phoneNumber) {
-        const extractedConfig = this.extractConfigFromStatus(status);
-        config.phoneNumber = extractedConfig.phoneNumber;
-      }
-      
+      // Get phone number from status
+      const config = this.extractConfigFromStatus(status);
       if (!config.phoneNumber) {
         throw new Error(`No phone number found for trigger ${triggerId}`);
       }
@@ -578,31 +567,49 @@ class TriggerService {
       // Format location data for SMS
       const locationText = this.formatLocationForSMS(status.locationData);
       
-      // Prepare SMS message
-      const defaultMessage = 'Alert: Motion detected. View recording at: ';
-      const message = (config.customMessage ?? defaultMessage) + 
-                     status.uploadedFileLink + 
-                     "\n\n" + locationText;
+      // Prepare message based on whether this is a follow-up or first notification
+      let message: string;
+      if (status.earlyNotificationSent) {
+        // This is a follow-up message
+        message = `Video upload complete. View recording at: ${status.uploadedFileLink}\n\n${locationText}`;
+      } else {
+        // This is the first notification
+        const defaultMessage = 'Alert: Motion detected. View recording at: ';
+        message = (config.customMessage ?? defaultMessage) + 
+                status.uploadedFileLink + 
+                "\n\n" + locationText;
+      }
       
-      logger.info(`Sending SMS notification for trigger ${triggerId} to ${config.phoneNumber}`);
+      logger.info(`Sending final notification for trigger ${triggerId} to ${config.phoneNumber}`);
       
       // Send SMS
       const smsResult = await GSMService.sendNewSMS(config.phoneNumber, message);
       
-      // Update trigger status with SMS result
-      status.smsStatus = smsResult;
+      // Update trigger status
+      status.finalNotificationSent = true;
+      status.completed = true;
       this.triggers.set(triggerId, status);
       
       if (smsResult) {
-        logger.info(`SMS notification sent successfully for trigger ${triggerId}`);
+        logger.info(`Final notification sent successfully for trigger ${triggerId}`);
       } else {
-        logger.warn(`SMS notification failed for trigger ${triggerId}`);
+        logger.warn(`Final notification failed for trigger ${triggerId}`);
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.err(`SMS notification error: ${errorMessage}`);
+      logger.err(`Final notification error: ${errorMessage}`);
       throw error;
     }
+  }
+  
+  /**
+   * Send SMS notification with the video link (legacy method, now replaced by sendFinalNotification)
+   * @param triggerId Trigger ID
+   * @param config Trigger configuration
+   */
+  private async sendSmsNotification(triggerId: string, config: TriggerConfig): Promise<void> {
+    // Call the new method for compatibility
+    return this.sendFinalNotification(triggerId);
   }
   
   /**
@@ -645,6 +652,7 @@ class TriggerService {
       // Update trigger status
       status.smsStatus = smsResult;
       status.earlyNotificationSent = true;
+      status.completed = true;
       this.triggers.set(triggerId, status);
       
       if (smsResult) {

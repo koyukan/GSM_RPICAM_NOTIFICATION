@@ -3,7 +3,7 @@ const axios = require('axios');
 // Configuration
 const BASE_URL = 'http://localhost:3000/api';
 const TRIGGER_ENDPOINT = `${BASE_URL}/trigger`;
-const TEST_PHONE_NUMBER = '+905076203483'; // Replace with a valid test phone number
+const TEST_PHONE_NUMBER = '+905559967545'; // Replace with a valid test phone number
 const TEST_DURATION = 5000; // 5 seconds
 
 // Colors for console output
